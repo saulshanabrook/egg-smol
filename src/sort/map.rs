@@ -62,6 +62,17 @@ impl Sort for MapSort {
         self.key.is_eq_sort() || self.value.is_eq_sort()
     }
 
+    fn inner_values(&self, value: &Value) -> Vec<(&ArcSort, Value)> {
+        let maps = self.maps.lock().unwrap();
+        let map = maps.get_index(value.bits as usize).unwrap();
+        let mut result = Vec::new();
+        for (k, v) in map.iter() {
+            result.push((&self.key, *k));
+            result.push((&self.value, *v));
+        }
+        result
+    }
+
     fn foreach_tracked_values<'a>(&'a self, value: &'a Value, mut f: Box<dyn FnMut(Value) + 'a>) {
         // TODO: Potential duplication of code
         let maps = self.maps.lock().unwrap();

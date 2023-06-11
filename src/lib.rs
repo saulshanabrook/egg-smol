@@ -2,6 +2,7 @@ pub mod ast;
 mod extract;
 mod function;
 mod gj;
+pub mod graph;
 mod proofs;
 pub mod sort;
 mod typecheck;
@@ -10,6 +11,9 @@ mod unionfind;
 pub mod util;
 mod value;
 
+use crate::graph::from_egraph::graph_from_egraph;
+use graph::to_graphviz::to_graphviz;
+use graphviz_rust::printer::DotPrinter;
 use hashbrown::hash_map::Entry;
 use index::ColumnIndex;
 use instant::{Duration, Instant};
@@ -30,7 +34,7 @@ use std::io::Read;
 use std::iter::once;
 use std::mem;
 use std::ops::{Deref, Range};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::{fmt::Debug, sync::Arc};
 use typecheck::Program;
@@ -269,7 +273,6 @@ impl EGraph {
                     .iter()
                     .chain(once(&function.schema.output)),
             ) {
-                assert!(sort.is_eq_container_sort() == rix.is_some());
                 if sort.is_eq_container_sort() {
                     let rix = rix.as_ref().unwrap();
                     for ix in rix.iter() {
@@ -1232,14 +1235,44 @@ impl EGraph {
         self.proof_state.type_info.sorts.get(&value.tag)
     }
 
-    // Gets the last extract report and returns it, if the last command saved it.
+    /// Gets the last extract report and returns it, if the last command saved it.
     pub fn get_extract_report(&self) -> &Option<ExtractReport> {
         &self.extract_report
     }
 
-    // Gets the last run report and returns it, if the last command saved it.
+    /// Gets the last run report and returns it, if the last command saved it.
     pub fn get_run_report(&self) -> &Option<RunReport> {
         &self.run_report
+    }
+
+    /// Exports the egraph as a Graphviz dot string
+    pub fn to_graphviz_string(&self) -> String {
+        to_graphviz(&graph_from_egraph(self))
+            .print(&mut graphviz_rust::printer::PrinterContext::default())
+    }
+
+    /// Saves the egraph as a DOT file at the given path
+    pub fn save_graph_as_dot<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
+        let dot = self.to_graphviz_string();
+        let mut file =
+            File::create(&path).map_err(|e| Error::IoError(path.as_ref().to_path_buf(), e))?;
+        std::io::Write::write_all(&mut file, dot.as_bytes())
+            .map_err(|e| Error::IoError(path.as_ref().to_path_buf(), e))?;
+        Ok(())
+    }
+
+    /// Saves the egraph as an SVG file at the given path
+    pub fn save_graph_as_svg<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
+        let dot = self.to_graphviz_string();
+        graphviz_rust::exec_dot(
+            dot,
+            vec![
+                graphviz_rust::cmd::Format::Svg.into(),
+                graphviz_rust::cmd::CommandArg::Output(path.as_ref().to_str().unwrap().to_string()),
+            ],
+        )
+        .map_err(|e| Error::IoError(path.as_ref().to_path_buf(), e))?;
+        Ok(())
     }
 }
 
