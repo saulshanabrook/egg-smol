@@ -172,6 +172,7 @@ fn build_colors(sorts: &Sorts) -> SortColors {
 
 fn build_graph(nodes: Nodes, edges: Edges, sort_colors: &SortColors) -> Graph {
     let mut stmts = configuration_statements();
+    stmts.push(stmt!(GraphAttributes::dpi(300.0)));
     // Iterate through the hierarchy of nodes.
     // In graphviz, config applies to any later nodes, so we can add the config for styling eclasses/prims and different
     // sorts only once before outputing all the cluster
