@@ -105,7 +105,7 @@ pub enum NCommand {
         name: Symbol,
         file: String,
     },
-    SaveSVG(String),
+    Visualize(String),
 }
 
 impl NormCommand {
@@ -159,7 +159,7 @@ impl NCommand {
                 name: *name,
                 file: file.clone(),
             },
-            NCommand::SaveSVG(file) => Command::SaveSVG(file.clone()),
+            NCommand::Visualize(file) => Command::Visualize(file.clone()),
         }
     }
 
@@ -205,7 +205,7 @@ impl NCommand {
                 name: *name,
                 file: file.clone(),
             },
-            NCommand::SaveSVG(file) => NCommand::SaveSVG(file.clone()),
+            NCommand::Visualize(file) => NCommand::Visualize(file.clone()),
         }
     }
 }
@@ -363,7 +363,7 @@ pub enum Command {
     Fail(Box<Command>),
     // TODO desugar include
     Include(String),
-    SaveSVG(String),
+    Visualize(String),
 }
 
 impl ToSexp for Command {
@@ -405,7 +405,7 @@ impl ToSexp for Command {
                 Some(until) => list!("simplify", config.limit, expr, ":until", ++ until),
                 None => list!("simplify", config.limit, expr),
             },
-            Command::SaveSVG(file) => list!("save-svg", format!("\"{}\"", file)),
+            Command::Visualize(file) => list!("save-svg", format!("\"{}\"", file)),
         }
     }
 }
