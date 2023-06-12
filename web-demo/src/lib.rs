@@ -11,7 +11,7 @@ pub struct Result {
 }
 
 #[wasm_bindgen]
-pub fn run_program(input: &str) -> String {
+pub fn run_program(input: &str) -> Result {
     let mut egraph = egglog::EGraph::default();
     match egraph.parse_and_run_program(input) {
         Ok(outputs) => {
