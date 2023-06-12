@@ -997,6 +997,10 @@ impl EGraph {
 
                 format!("Output to '{filename:?}'.")
             }
+            NCommand::SaveSVG(file) => {
+                self.save_graph_as_svg(&file)?;
+                format!("Saved SVG to '{file}'.")
+            }
         });
 
         res

@@ -86,6 +86,7 @@ Command: Command = {
     LParen "output" <file:String> <exprs:Expr+> RParen => Command::Output { file, exprs },
     LParen "fail" <Command> RParen => Command::Fail(Box::new(<>)),
     LParen "include" <file:String> RParen => Command::Include(file),
+    LParen "save-svg" <file:String> RParen => Command::SaveSVG(file),
 }
 
 Schedule: Schedule = {

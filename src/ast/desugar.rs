@@ -588,6 +588,9 @@ pub(crate) fn desugar_command(
         Command::Input { name, file } => {
             vec![NCommand::Input { name, file }]
         }
+        Command::SaveSVG(file) => {
+            vec![NCommand::SaveSVG(file)]
+        }
     };
 
     Ok(res
