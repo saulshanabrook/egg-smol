@@ -21,6 +21,7 @@ impl FuncType {
 pub struct TypeInfo {
     // get the sort from the sorts name()
     pub presorts: HashMap<Symbol, PreSort>,
+    pub presort_names: HashSet<Symbol>,
     pub sorts: HashMap<Symbol, Arc<dyn Sort>>,
     pub primitives: HashMap<Symbol, Vec<Primitive>>,
     pub func_types: HashMap<Symbol, FuncType>,
@@ -32,6 +33,7 @@ impl Default for TypeInfo {
     fn default() -> Self {
         let mut res = Self {
             presorts: Default::default(),
+            presort_names: Default::default(),
             sorts: Default::default(),
             primitives: Default::default(),
             func_types: Default::default(),
@@ -44,6 +46,10 @@ impl Default for TypeInfo {
         res.add_sort(I64Sort::new("i64".into()));
         res.add_sort(F64Sort::new("f64".into()));
         res.add_sort(RationalSort::new("Rational".into()));
+
+        res.presort_names.extend(MapSort::presort_names());
+        res.presort_names.extend(SetSort::presort_names());
+
         res.presorts.insert("Map".into(), MapSort::make_sort);
         res.presorts.insert("Set".into(), SetSort::make_sort);
         res.presorts.insert("Vec".into(), SetSort::make_sort);
@@ -232,15 +238,25 @@ impl TypeInfo {
 
     fn verify_normal_form_facts(&self, facts: &Vec<NormFact>) -> HashSet<Symbol> {
         let mut let_bound: HashSet<Symbol> = Default::default();
-        let mut bound_in_constraint = vec![];
+        let mut bound_in_constraint: HashSet<Symbol> = Default::default();
 
         for fact in facts {
             match fact {
-                NormFact::Assign(var, NormExpr::Call(_head, body)) => {
+                NormFact::Compute(var, NormExpr::Call(_head, body)) => {
+                    assert!(!self.global_types.contains_key(var));
                     assert!(let_bound.insert(*var));
                     body.iter().for_each(|bvar| {
                         if !self.global_types.contains_key(bvar) {
-                            assert!(let_bound.insert(*bvar));
+                            assert!(let_bound.contains(bvar) || bound_in_constraint.contains(bvar));
+                        }
+                    });
+                }
+                NormFact::Assign(var, NormExpr::Call(_head, body)) => {
+                    assert!(!self.global_types.contains_key(var));
+                    assert!(let_bound.insert(*var));
+                    body.iter().for_each(|bvar| {
+                        if !self.global_types.contains_key(bvar) {
+                            assert!(let_bound.insert(*bvar), "{bvar} was already bound!");
                         }
                     });
                 }
@@ -255,8 +271,8 @@ impl TypeInfo {
                     {
                         panic!("ConstrainEq on unbound variables");
                     }
-                    bound_in_constraint.push(*var1);
-                    bound_in_constraint.push(*var2);
+                    bound_in_constraint.insert(*var1);
+                    bound_in_constraint.insert(*var2);
                 }
             }
         }
@@ -379,7 +395,7 @@ impl TypeInfo {
 
     fn typecheck_fact(&mut self, ctx: CommandId, fact: &NormFact) -> Result<(), TypeError> {
         match fact {
-            NormFact::Assign(var, expr) => {
+            NormFact::Assign(var, expr) | NormFact::Compute(var, expr) => {
                 let expr_type = self.typecheck_expr(ctx, expr, false)?;
                 if let Some(existing) = self
                     .local_types
@@ -478,7 +494,7 @@ impl TypeInfo {
     }
 
     pub(crate) fn is_primitive(&self, sym: Symbol) -> bool {
-        self.primitives.contains_key(&sym)
+        self.primitives.contains_key(&sym) || self.presort_names.contains(&sym)
     }
 
     fn lookup_func(
