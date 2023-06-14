@@ -21,6 +21,7 @@ impl FuncType {
 pub struct TypeInfo {
     // get the sort from the sorts name()
     pub presorts: HashMap<Symbol, PreSort>,
+    pub presort_names: HashSet<Symbol>,
     pub sorts: HashMap<Symbol, Arc<dyn Sort>>,
     pub primitives: HashMap<Symbol, Vec<Primitive>>,
     pub func_types: HashMap<Symbol, FuncType>,
@@ -32,6 +33,7 @@ impl Default for TypeInfo {
     fn default() -> Self {
         let mut res = Self {
             presorts: Default::default(),
+            presort_names: Default::default(),
             sorts: Default::default(),
             primitives: Default::default(),
             func_types: Default::default(),
@@ -44,6 +46,10 @@ impl Default for TypeInfo {
         res.add_sort(I64Sort::new("i64".into()));
         res.add_sort(F64Sort::new("f64".into()));
         res.add_sort(RationalSort::new("Rational".into()));
+
+        res.presort_names.extend(MapSort::presort_names());
+        res.presort_names.extend(SetSort::presort_names());
+
         res.presorts.insert("Map".into(), MapSort::make_sort);
         res.presorts.insert("Set".into(), SetSort::make_sort);
         res.presorts.insert("Vec".into(), SetSort::make_sort);

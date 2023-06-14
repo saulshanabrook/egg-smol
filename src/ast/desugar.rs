@@ -315,7 +315,7 @@ fn desugar_schedule(desugar: &mut Desugar, schedule: &Schedule) -> NormSchedule 
             NormSchedule::Saturate(Box::new(norm_schedule))
         }
         Schedule::Run(run_config) => NormSchedule::Run(NormRunConfig {
-            ruleset: run_config.ruleset.clone(),
+            ruleset: run_config.ruleset,
             limit: run_config.limit,
             until: run_config
                 .until
