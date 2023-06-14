@@ -232,16 +232,25 @@ impl TypeInfo {
 
     fn verify_normal_form_facts(&self, facts: &Vec<NormFact>) -> HashSet<Symbol> {
         let mut let_bound: HashSet<Symbol> = Default::default();
-        let mut bound_in_constraint = vec![];
+        let mut bound_in_constraint: HashSet<Symbol> = Default::default();
 
         for fact in facts {
             match fact {
-                NormFact::Assign(var, NormExpr::Call(_head, body))
-                | NormFact::Compute(var, NormExpr::Call(_head, body)) => {
+                NormFact::Compute(var, NormExpr::Call(_head, body)) => {
+                    assert!(!self.global_types.contains_key(var));
                     assert!(let_bound.insert(*var));
                     body.iter().for_each(|bvar| {
                         if !self.global_types.contains_key(bvar) {
-                            assert!(let_bound.insert(*bvar));
+                            assert!(let_bound.contains(bvar) || bound_in_constraint.contains(bvar));
+                        }
+                    });
+                }
+                NormFact::Assign(var, NormExpr::Call(_head, body)) => {
+                    assert!(!self.global_types.contains_key(var));
+                    assert!(let_bound.insert(*var));
+                    body.iter().for_each(|bvar| {
+                        if !self.global_types.contains_key(bvar) {
+                            assert!(let_bound.insert(*bvar), "{bvar} was already bound!");
                         }
                     });
                 }
@@ -256,8 +265,8 @@ impl TypeInfo {
                     {
                         panic!("ConstrainEq on unbound variables");
                     }
-                    bound_in_constraint.push(*var1);
-                    bound_in_constraint.push(*var2);
+                    bound_in_constraint.insert(*var1);
+                    bound_in_constraint.insert(*var2);
                 }
             }
         }
