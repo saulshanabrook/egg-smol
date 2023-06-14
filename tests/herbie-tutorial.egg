@@ -7,7 +7,7 @@
 (let zero (Num (rational 0 1)))
 (let one (Num (rational 1 1)))
 (let two (Num (rational 2 1)))
-(let expr (Add one two))
+(Add one two)
 
 (rewrite (Add ?a ?b) (Add ?b ?a))
 
@@ -75,32 +75,33 @@
                (lower-bound ?b)))))
 
 ;; Propagate upper-bound for addition
-(rule ((Add a b))
-      ((set (upper-bound (Add a b))
-            (+ (upper-bound a) (upper-bound b)))))
+(rule ((Add ?a ?b))
+      ((set (upper-bound (Add ?a ?b))
+            (+ (upper-bound ?a)
+               (upper-bound ?b)))))
 
 
 (rule (
-  (= expr (Num ?a))
+  (= ?expr (Num ?a))
   ;; filter using primitive >
-  [> (lower-bound expr)
+  [> (lower-bound ?expr)
      (rational 0 1)]
 )(
   (union one
-         (Div expr
-              expr))
+         (Div ?expr
+              ?expr))
 ))
 
 ;; same rule as above, but for addition
 (rule (
-  (= expr (Add ?a ?b))
+  (= ?expr (Add ?a ?b))
   ;; filter using primitive >
-  [> (lower-bound expr)
+  [> (lower-bound ?expr)
      (rational 0 1)]
 )(
   (union one
-         (Div expr
-              expr))
+         (Div ?expr
+              ?expr))
 ))
 
 
@@ -115,7 +116,7 @@
 
 (extract (lower-bound x1))
 (extract (upper-bound x1))
-(check (= one (Div x1 x1)))
+(check (= one (Div ?x1 ?x1)))
 
 
 ;; Set the variable x to a particular input value 200/201
