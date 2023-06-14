@@ -830,10 +830,10 @@ impl EGraph {
             NCommand::NormRule {
                 ruleset,
                 rule,
-                name,
+                name: _name,
             } => {
                 self.add_rule(rule.to_rule(), ruleset)?;
-                format!("Declared rule {name}.")
+                String::new()
             }
             NCommand::RunSchedule(sched) => {
                 if should_run {
