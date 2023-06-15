@@ -104,8 +104,8 @@
                 // Fit graph to that size, so that all is visible
                 fit: true,
                 // Set to be as big as container
-                width,
-                height,
+                width: width,
+                height: height,
                 // Don't animate transitions between shapes for performance
                 tweenPaths: false,
                 tweenShapes: false,
@@ -192,10 +192,13 @@
                 prevButton.style.display = "inline-block";
                 slideNumber.style.display = "inline-block";
                 slideNumber.innerHTML = `${state.slideIndex + 1} / ${state.contentBySexp.length}`;
+                
+                let oldContent = state.contentBySexp.slice(0, state.slideIndex).join("\n\n");
+                editor.setValue(oldContent);
+                window.run();
                 // content is all the sexps up to slidenum
                 let content = state.contentBySexp.slice(0, state.slideIndex + 1).join("\n\n");
                 editor.setValue(content);
-                window.run();
             }
         }
 
