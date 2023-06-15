@@ -126,19 +126,25 @@
             loadEditor()
         }
 
+        function setProgram(program) {
+            let cursor = editor.getCursor();
+            editor.setValue(program);
+            editor.setCursor(cursor);
+        }
+
         function loadEditor() {
             let url = new URL(location);
             let example = url.searchParams.get("example");
             let program = url.searchParams.get("program");
             if (example) {
                 if (examples[example]) {
-                    editor.setValue(examples[example]);
+                    setProgram(examples[example]);
                 } else {
                     console.warn("Bad example choice", example, "choices: ", Object.keys(examples));
                 }
             } else if (program) {
                 let decompressed = decompressUrlSafe(program);
-                editor.setValue(decompressed);
+                setProgram(decompressed);
             }
         }
 
@@ -210,7 +216,7 @@
 
                 // content is all the sexps up to slidenum
                 let content = state.contentBySexp.slice(0, state.slideIndex + 1).join("\n\n") + "\n\n";
-                editor.setValue(content);
+                setProgram(content);
             }
             editor.scrollTo(0, editor.getScrollInfo().height);
         }
