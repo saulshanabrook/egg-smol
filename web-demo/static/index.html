@@ -90,6 +90,7 @@
         var state = {
             isSlideMode: false,
             slideIndex: 0,
+            hasRun: true,
             contentBySexp: [],
         };
 
@@ -183,6 +184,11 @@
         }
 
         function updateSlideMode() {
+            if (state.hasRun) {
+                nextButton.innerHTML = "next";
+            } else {
+                nextButton.innerHTML = "run";
+            }
             if(!state.isSlideMode) {
                 nextButton.style.display = "none";
                 prevButton.style.display = "none";
@@ -192,27 +198,32 @@
                 prevButton.style.display = "inline-block";
                 slideNumber.style.display = "inline-block";
                 slideNumber.innerHTML = `${state.slideIndex + 1} / ${state.contentBySexp.length}`;
-                
-                let oldContent = state.contentBySexp.slice(0, state.slideIndex).join("\n\n");
-                editor.setValue(oldContent);
-                window.run();
+
                 // content is all the sexps up to slidenum
-                let content = state.contentBySexp.slice(0, state.slideIndex + 1).join("\n\n");
+                let content = state.contentBySexp.slice(0, state.slideIndex + 1).join("\n\n") + "\n\n";
                 editor.setValue(content);
             }
+            editor.scrollTo(0, editor.getScrollInfo().height);
         }
 
         window.slideMode = function slideMode() {
             state.isSlideMode = !state.isSlideMode;
             state.slideIndex = 0;
+            state.hasRun = true;
             makeContentBySexp();
             updateSlideMode();
         }
 
         window.next = function next() {
-            state.slideIndex++;
-            if(state.slideIndex >= state.contentBySexp.length) {
-                state.slideIndex = state.contentBySexp.length - 1;
+            if (state.hasRun) {
+                state.slideIndex++;
+                if(state.slideIndex >= state.contentBySexp.length) {
+                    state.slideIndex = state.contentBySexp.length - 1;
+                }
+                state.hasRun = false;
+            } else {
+                window.run();
+                state.hasRun = true;
             }
             updateSlideMode();
         }
@@ -222,6 +233,9 @@
             if(state.slideIndex < 0) {
                 state.slideIndex = 0;
             }
+            
+            window.run();
+            state.hasRun = true;
             updateSlideMode();
         }
 

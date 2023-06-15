@@ -42,7 +42,7 @@ pub(crate) fn graph_from_egraph(egraph: &EGraph) -> ExportedGraph {
                             .iter()
                             .map(|v| export_value_with_sort(egraph, *v))
                             .collect(),
-                        output: output,
+                        output,
                         input_hash: hash_values(&input_values),
                     }
                 })
