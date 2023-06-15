@@ -77,6 +77,7 @@
 
     <link rel="stylesheet" href="//unpkg.com/codemirror@5.65.2/lib/codemirror.css">
     <script src="//unpkg.com/codemirror@5.65.2/lib/codemirror.js"></script>
+    <script src="//unpkg.com/codemirror@5.65.2/mode/scheme/scheme.js"></script>
     <script src="https://unpkg.com/@hpcc-js/wasm/dist/graphviz.umd.js" type="javascript/worker"></script>
     <script type="module">
         import { compressUrlSafe, decompressUrlSafe } from './lzma-url.mjs';
@@ -138,6 +139,14 @@
             } else if (program) {
                 let decompressed = decompressUrlSafe(program);
                 editor.setValue(decompressed);
+            }
+        }
+
+        window.onEnter = function onEnter() {
+            if (state.isSlideMode) {
+                window.next();
+            } else {
+                window.run();
             }
         }
 
@@ -296,8 +305,10 @@
             output = document.getElementById("output");
             editor = CodeMirror(document.getElementById("editor"), {
                 lineNumbers: true,
+                mode: "scheme",
+                lineWrapping: true,
                 extraKeys: {
-                    "Ctrl-Enter": run,
+                    "Ctrl-Enter": onEnter,
                 }
             });
             nextButton = document.getElementById("next");
