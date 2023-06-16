@@ -53,15 +53,16 @@
 (run 1)
 
 ;; uh oh, division by zero!
+(check (Div zero zero))
 (pop)
 
 
 ;; one lower-bound per e-class
 (function lower-bound (Math) Rational
-                      :merge (max old new))
+          :merge (max old new))
 ;; one upper-bound per e-class
 (function upper-bound (Math) Rational
-                      :merge (min old new))
+          :merge (min old new))
 
 ;; Set the bounds for constants
 (rule ((Num ?r))

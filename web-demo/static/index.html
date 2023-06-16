@@ -258,9 +258,10 @@
                 state.slideIndex = 0;
             }
             
+            
+            updateSlideMode();
             window.run();
             state.hasRun = true;
-            updateSlideMode();
         }
 
         window.pushState = function pushState() {

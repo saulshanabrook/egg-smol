@@ -22,19 +22,11 @@ pub(crate) fn graph_from_egraph(egraph: &EGraph) -> ExportedGraph {
                 .take(MAX_CALLS_PER_FUNCTION)
                 .map(|(input, output)| {
                     let mut input_values = input.data().to_vec();
-                    let is_prim = egraph
-                        .proof_state
-                        .type_info
-                        .is_primitive(function.schema.output.name());
-                    let output = if is_prim {
-                        input_values.push(output.value);
-                        ExportedValueWithSort(
-                            ExportedValue::Prim("Unit".into(), vec![], 0),
-                            "Unit".to_string(),
-                        )
-                    } else {
-                        export_value_with_sort(egraph, output.value)
-                    };
+                    input_values.push(output.value);
+                    let output = ExportedValueWithSort(
+                        ExportedValue::Prim("Unit".into(), vec![], 0),
+                        "Unit".to_string(),
+                    );
 
                     ExportedCall {
                         fn_name: function.decl.name.to_string(),
