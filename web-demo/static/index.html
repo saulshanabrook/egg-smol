@@ -107,6 +107,8 @@
             const graphviz = graphContainer.graphviz({
                 // Fit graph to that size, so that all is visible
                 fit: true,
+                width: width,
+                height: height,
                 // Don't animate transitions between shapes for performance
                 tweenPaths: false,
                 tweenShapes: false,
@@ -115,9 +117,9 @@
                 .dot(message.data.dot).render();
             // If we have made a zoom selection, reset that before transitioning
             // TODO: figure out how to transition BOTH zoom and dot at once
-            if (graphviz._zoomSelection) {
+            /*if (graphviz._zoomSelection) {
                 graphviz.resetZoom();
-            }
+            }*/
         }
 
         window.onpopstate = function (event) {
