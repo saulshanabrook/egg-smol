@@ -39,7 +39,8 @@
 
         #toolbar button,
         #toolbar .badge,
-        #toolbar select {
+        #toolbar select
+        #toolbar p {
             margin-right: 5px;
             margin-top: 5px;
             display: inline-block;
@@ -84,7 +85,8 @@
         import * as d3 from 'https://cdn.skypack.dev/pin/d3@v7.8.4-U7lzM69QcKPxzv4xSvs7/mode=imports,min/optimized/d3.js';
         import 'https://cdn.skypack.dev/pin/d3-graphviz@v5.0.2-ZoIcpbOADQcAxREohmOW/mode=imports,min/optimized/d3-graphviz.js';
 
-        let editor, output, examples, nextButton, prevButton, slideNumber;
+        let editor, output, examples;
+        let nextButton, prevButton, slideNumber, docsButton, githubButton, shareButton, examplesDropDown;
         console.log("Main script is running");
         let worker = new Worker("worker.js");
 
@@ -105,9 +107,6 @@
             const graphviz = graphContainer.graphviz({
                 // Fit graph to that size, so that all is visible
                 fit: true,
-                // Set to be as big as container
-                width: width,
-                height: height,
                 // Don't animate transitions between shapes for performance
                 tweenPaths: false,
                 tweenShapes: false,
@@ -200,19 +199,27 @@
 
         function updateSlideMode() {
             if (state.hasRun) {
-                nextButton.innerHTML = "next";
+                nextButton.innerHTML = "Next";
             } else {
-                nextButton.innerHTML = "run";
+                nextButton.innerHTML = "Run";
             }
             if(!state.isSlideMode) {
                 nextButton.style.display = "none";
                 prevButton.style.display = "none";
                 slideNumber.style.display = "none";
+                docsButton.style.display = "inline-block";
+                githubButton.style.display = "inline-block";
+                shareButton.style.display = "inline-block";
+                examplesDropDown.style.display = "inline-block";
             } else {
                 nextButton.style.display = "inline-block";
                 prevButton.style.display = "inline-block";
                 slideNumber.style.display = "inline-block";
-                slideNumber.innerHTML = `${state.slideIndex + 1} / ${state.contentBySexp.length}`;
+                docsButton.style.display = "none";
+                githubButton.style.display = "none";
+                shareButton.style.display = "none";
+                examplesDropDown.style.display = "none";
+                slideNumber.innerHTML = `${state.slideIndex + 1}`;
 
                 // content is all the sexps up to slidenum
                 let content = state.contentBySexp.slice(0, state.slideIndex + 1).join("\n\n") + "\n\n";
@@ -319,7 +326,11 @@
             });
             nextButton = document.getElementById("next");
             prevButton = document.getElementById("prev");
+            docsButton = document.getElementById("docs");
+            shareButton = document.getElementById("share");
+            githubButton = document.getElementById("github");
             slideNumber = document.getElementById("slideNumber");
+            examplesDropDown = document.getElementById("examples");
 
             loadEditor();
             updateSlideMode();
@@ -333,20 +344,22 @@
     <div id="panel">
         <div id="toolbar">
             <button onclick="run()">Run</button>
-            <button onclick="pushState()">Share</button>
+            <button onclick="pushState()" id="share">Share</button>
             <button onclick="slideMode()">Slidemode</button>
-            <button id="next" onclick="next()">Next</button>
             <button id="prev" onclick="prev()">Prev</button>
+            <button id="next" onclick="next()">Next</button>
             <p id="slideNumber"></p>
 
             <!-- <label for="examples">Examples:</label> -->
             <select name="examples" id="examples">
                 <option value=""> Load an example </option>
             </select>
-            <div class="right">
+            <div class="right" id="github">
                 <a class="badge" href="https://github.com/egraphs-good/egglog">
                     <img alt="GitHub Repo"
                         src="https://img.shields.io/github/stars/egraphs-good/egglog?label=GitHub&style=social"></a>
+            </div>
+            <div class="right" id="docs">
                 <a class="badge" href="docs/egglog">
                     <img alt="Main Branch Documentation" src="https://img.shields.io/badge/docs-main-blue"></a>
             </div>
