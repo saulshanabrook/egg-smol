@@ -233,7 +233,7 @@
         window.slideMode = function slideMode() {
             state.isSlideMode = !state.isSlideMode;
             state.slideIndex = 0;
-            state.hasRun = true;
+            state.hasRun = false;
             makeContentBySexp();
             updateSlideMode();
         }
