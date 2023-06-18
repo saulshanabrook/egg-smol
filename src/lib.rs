@@ -830,10 +830,10 @@ impl EGraph {
             NCommand::NormRule {
                 ruleset,
                 rule,
-                name,
+                name: _name,
             } => {
                 self.add_rule(rule.to_rule(), ruleset)?;
-                format!("Declared rule {name}.")
+                String::new()
             }
             NCommand::RunSchedule(sched) => {
                 if should_run {
@@ -997,6 +997,10 @@ impl EGraph {
                 }
 
                 format!("Output to '{filename:?}'.")
+            }
+            NCommand::Visualize(file) => {
+                self.save_graph_as(&file)?;
+                format!("Saved SVG to '{file}'.")
             }
         });
 
@@ -1262,13 +1266,22 @@ impl EGraph {
         Ok(())
     }
 
-    /// Saves the egraph as an SVG file at the given path
-    pub fn save_graph_as_svg<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
+    pub fn save_graph_as<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
+        let format = path
+            .as_ref()
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        let gformat = match format {
+            "svg" => graphviz_rust::cmd::Format::Svg,
+            "png" => graphviz_rust::cmd::Format::Png,
+            _ => return Err(Error::UnknownFormat(format.to_string())),
+        };
         let dot = self.to_graphviz_string();
         graphviz_rust::exec_dot(
             dot,
             vec![
-                graphviz_rust::cmd::Format::Svg.into(),
+                gformat.into(),
                 graphviz_rust::cmd::CommandArg::Output(path.as_ref().to_str().unwrap().to_string()),
             ],
         )
@@ -1299,6 +1312,8 @@ pub enum Error {
     ExpectFail,
     #[error("IO error: {0}: {1}")]
     IoError(PathBuf, std::io::Error),
+    #[error("Unknown visualization format: {0}. Options include 'svg' and 'png'")]
+    UnknownFormat(String),
 }
 
 fn safe_shl(a: usize, b: usize) -> usize {

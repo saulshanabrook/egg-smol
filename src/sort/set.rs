@@ -139,6 +139,22 @@ impl Sort for SetSort {
     }
 }
 
+impl SetSort {
+    pub fn presort_names() -> Vec<Symbol> {
+        vec![
+            "set-of".into(),
+            "set-empty".into(),
+            "set-insert".into(),
+            "set-not-contains".into(),
+            "set-contains".into(),
+            "set-remove".into(),
+            "set-union".into(),
+            "set-diff".into(),
+            "set-intersect".into(),
+        ]
+    }
+}
+
 impl IntoSort for ValueSet {
     type Sort = SetSort;
     fn store(self, sort: &Self::Sort) -> Option<Value> {

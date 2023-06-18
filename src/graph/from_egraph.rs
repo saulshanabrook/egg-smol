@@ -10,7 +10,8 @@ pub(crate) fn graph_from_egraph(egraph: &EGraph) -> ExportedGraph {
         .functions
         .values()
         // Only include functions with a non temporary name
-        .filter(|f| !is_temp_name(f.decl.name.to_string()))
+        // and are not just variable bindings
+        .filter(|f| !is_temp_name(f.decl.name.to_string()) && !f.is_variable)
         // Map each function to its calls
         .map(|function| {
             function
@@ -20,15 +21,26 @@ pub(crate) fn graph_from_egraph(egraph: &EGraph) -> ExportedGraph {
                 .filter(|(i, _)| i.live())
                 .take(MAX_CALLS_PER_FUNCTION)
                 .map(|(input, output)| {
-                    let input_values = input.data();
+                    let mut input_values = input.data().to_vec();
+
+                    let output = if !function.schema.output.is_eq_sort() {
+                        input_values.push(output.value);
+                        ExportedValueWithSort(
+                            ExportedValue::Prim("Unit".into(), vec![], 0),
+                            "Unit".to_string(),
+                        )
+                    } else {
+                        export_value_with_sort(egraph, output.value)
+                    };
+
                     ExportedCall {
                         fn_name: function.decl.name.to_string(),
                         inputs: input_values
                             .iter()
                             .map(|v| export_value_with_sort(egraph, *v))
                             .collect(),
-                        output: export_value_with_sort(egraph, output.value),
-                        input_hash: hash_values(input_values),
+                        output,
+                        input_hash: hash_values(&input_values),
                     }
                 })
                 .collect::<Vec<_>>()

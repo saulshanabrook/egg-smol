@@ -87,7 +87,7 @@ fn main() {
         // Save the graph as an SVG file if the `save_svg` flag is set
         if args.save_svg {
             let svg_path = input.with_extension("svg");
-            match egraph.save_graph_as_svg(&svg_path) {
+            match egraph.save_graph_as(&svg_path) {
                 Ok(()) => log::info!("Saved graph as SVG file: {}", svg_path.display()),
                 Err(err) => log::error!("Failed to save graph as SVG file: {}", err),
             }

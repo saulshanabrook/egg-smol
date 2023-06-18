@@ -1,0 +1,45 @@
+(datatype Math
+  (Num Rational)
+  (Var String)
+  (Add Math Math)
+  (Div Math Math))
+
+(let expr (Add  (Num (rational 1 1)) (Num (rational 2 1))))
+
+
+;; one lower-bound per e-class
+(function lower-bound (Math) Rational
+                      :merge (max old new))
+
+;; Set the bounds for constants
+(rule ((Num ?r))
+      ((set (lower-bound (Num ?r)) ?r)))
+
+;; Propagate lower-bound for addition
+(rule ((Add ?a ?b))
+      ((set (lower-bound (Add ?a ?b))
+            (+ (lower-bound ?a)
+               (lower-bound ?b)))))
+
+
+(rule (
+  (= expr (Add ?a ?b))
+  ;; filter using primitive >
+  [> (lower-bound expr)
+     (rational 0 1)]
+)(
+  (union (Num (rational 1 1))
+         (Div expr
+              expr))
+))
+
+
+
+(let x (Var "x"))
+(let x1 (Add x (Num (rational 1 1))))
+
+(set (lower-bound x1) (rational 1 1))
+
+(run 5)
+
+(check (= (Num (rational 1 1)) (Div x1 x1)))

@@ -131,8 +131,8 @@ impl SubgraphBuilder {
                 }
                 // For primitives, we make a new node for each input, based on the function name and the index of the input
                 ExportedValue::Prim(name, inner, _) => {
-                    let child_node_id = format!("{}_{}", node_id, i);
-                    let child_subgraph_id = format!("cluster_{}", child_node_id);
+                    let child_node_id = name.to_string();
+                    let child_subgraph_id = format!("cluster_{}", name);
                     let subgraph_node = self.add_node(&child_node_id, name, inner);
                     self.add_value_subgraph(&child_subgraph_id, &value.1, vec![subgraph_node]);
                     (child_node_id, child_subgraph_id)
@@ -156,9 +156,10 @@ impl SubgraphBuilder {
             .or_default();
 
         if subgraphs.contains_key(subgraph_id) {
-            panic!("Subgraph already exists");
+            //panic!("Subgraph already exists");
+        } else {
+            subgraphs.insert(subgraph_id.to_string(), nodes);
         }
-        subgraphs.insert(subgraph_id.to_string(), nodes);
     }
 }
 

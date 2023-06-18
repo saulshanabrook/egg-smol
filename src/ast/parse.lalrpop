@@ -86,6 +86,7 @@ Command: Command = {
     LParen "output" <file:String> <exprs:Expr+> RParen => Command::Output { file, exprs },
     LParen "fail" <Command> RParen => Command::Fail(Box::new(<>)),
     LParen "include" <file:String> RParen => Command::Include(file),
+    LParen "visualize" <file:String> RParen => Command::Visualize(file),
 }
 
 Schedule: Schedule = {

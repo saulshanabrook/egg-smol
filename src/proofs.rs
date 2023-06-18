@@ -194,6 +194,7 @@ fn instrument_facts(
                 assert!(info.var_proof.insert(*lhs, rep_prf).is_none());
             }
             NormFact::Assign(lhs, NormExpr::Call(head, body))
+            | NormFact::Compute(lhs, NormExpr::Call(head, body))
                 if proof_state.type_info.is_primitive(*head) =>
             {
                 // child terms should already exist if we are computing something
@@ -217,7 +218,8 @@ fn instrument_facts(
                 info.var_term.insert(*lhs, rep_trm);
                 info.var_proof.insert(*lhs, rep_prf);
             }
-            NormFact::Assign(lhs, NormExpr::Call(head, body)) => {
+            NormFact::Assign(lhs, NormExpr::Call(head, body))
+            | NormFact::Compute(lhs, NormExpr::Call(head, body)) => {
                 let rep = proof_state.get_fresh();
                 let rep_trm = proof_state.get_fresh();
                 let rep_prf = proof_state.get_fresh();
@@ -486,7 +488,7 @@ fn add_rule_proof(
 
     for fact in facts {
         match fact {
-            NormFact::Assign(lhs, _rhs) => {
+            NormFact::Assign(lhs, _rhs) | NormFact::Compute(lhs, _rhs) => {
                 let fresh = proof_state.get_fresh();
                 res.push(NormAction::Let(
                     fresh,
