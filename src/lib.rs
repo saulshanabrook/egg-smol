@@ -67,12 +67,18 @@ pub struct RunReport {
     pub rebuild_time: Duration,
 }
 
+/// A report of the results of an extract action.
 #[derive(Debug, Clone)]
-pub struct ExtractReport {
-    pub cost: usize,
-    pub expr: Term,
-    pub variants: Vec<Term>,
-    pub termdag: TermDag,
+pub enum ExtractReport {
+    Best {
+        termdag: TermDag,
+        cost: usize,
+        expr: Term,
+    },
+    Variants {
+        termdag: TermDag,
+        variants: Vec<Term>,
+    },
 }
 
 impl RunReport {
@@ -275,7 +281,18 @@ impl EGraph {
     pub fn pop(&mut self) -> Result<(), Error> {
         match self.egraphs.pop() {
             Some(e) => {
+                // Copy the reports and messages from the popped egraph
+                let extract_report = self.extract_report.clone();
+                let run_report = self.run_report.clone();
+                let messages = self.msgs.clone();
                 *self = e;
+                if let Some(report) = extract_report {
+                    self.extract_report = Some(report);
+                }
+                if let Some(report) = run_report {
+                    self.run_report = Some(report);
+                }
+                self.msgs.extend(messages);
                 Ok(())
             }
             None => Err(Error::Pop),
@@ -909,8 +926,6 @@ impl EGraph {
 
     fn run_command(&mut self, command: NCommand, should_run: bool) -> Result<(), Error> {
         let pre_rebuild = Instant::now();
-        self.extract_report = None;
-        self.run_report = None;
         let rebuild_num = self.rebuild()?;
         if rebuild_num > 0 {
             log::info!(
@@ -921,8 +936,6 @@ impl EGraph {
 
         self.debug_assert_invariants();
 
-        self.extract_report = None;
-        self.run_report = None;
         match command {
             NCommand::SetOption { name, value } => {
                 let str = format!("Set option {} to {}", name, value);
@@ -1089,11 +1102,12 @@ impl EGraph {
                     .create(true)
                     .open(&filename)
                     .map_err(|e| Error::IoError(filename.clone(), e))?;
-
+                let mut termdag = TermDag::default();
                 for expr in exprs {
+                    let (t, value) = self.eval_expr(&expr, None, true)?;
+                    let expr = self.extract(value, &mut termdag, &t).1;
                     use std::io::Write;
-                    let res = self.extract_expr(expr, 1)?;
-                    writeln!(f, "{}", res.termdag.to_string(&res.expr))
+                    writeln!(f, "{}", termdag.to_string(&expr))
                         .map_err(|e| Error::IoError(filename.clone(), e))?;
                 }
 
@@ -1107,31 +1121,6 @@ impl EGraph {
         for f in self.functions.values_mut() {
             f.clear();
         }
-    }
-
-    // Extract an expression from the current state, returning the cost, the extracted expression and some number
-    // of other variants, if variants is not zero.
-    pub fn extract_expr(&mut self, e: Expr, num_variants: usize) -> Result<ExtractReport, Error> {
-        let (t, value) = self.eval_expr(&e, None, true)?;
-        let mut termdag = TermDag::default();
-        let (cost, expr) = self.extract(value, &mut termdag, &t);
-        let variants = match num_variants {
-            0 => vec![],
-            1 => vec![expr.clone()],
-            _ => {
-                if self.get_sort(&value).is_some_and(|sort| sort.is_eq_sort()) {
-                    self.extract_variants(value, num_variants, &mut termdag)
-                } else {
-                    vec![expr.clone()]
-                }
-            }
-        };
-        Ok(ExtractReport {
-            cost,
-            expr,
-            variants,
-            termdag,
-        })
     }
 
     pub fn process_commands(
