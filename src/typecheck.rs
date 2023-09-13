@@ -721,6 +721,8 @@ impl EGraph {
         program: &Program,
         make_defaults: bool,
     ) -> Result<(), Error> {
+        println!("{}", std::backtrace::Backtrace::force_capture());
+        println!("Running {:?}", program);
         for instr in &program.0 {
             match instr {
                 Instruction::Global(sym) => {

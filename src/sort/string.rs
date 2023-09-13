@@ -79,8 +79,10 @@ impl PrimitiveLike for Add {
         let mut res_string: String = "".to_owned();
         for value in values {
             let sym = Symbol::load(&self.string, value);
+            println!("  Concating: {:?}", sym.to_string());
             res_string.push_str(sym.as_str());
         }
+        println!("  - > res: {:?}", res_string);
         let res_symbol: Symbol = res_string.into();
         Some(Value::from(res_symbol))
     }

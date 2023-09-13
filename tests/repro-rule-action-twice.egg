@@ -1,0 +1,42 @@
+; https://github.com/egraphs-good/egglog/issues/229
+(function statements () String :merge (+ old new) :default "")
+(function gensym () i64 :merge (+ old new) :default 0)
+(sort Math)
+(function Num (i64) Math)
+(function Var (String) Math)
+(function Add (Math Math) Math)
+(function Mul (Math Math) Math)
+(function expr (Math) String)
+(rule ((= x (Var s)))
+      ((set (expr x) s))
+         )
+(rule ((= x (Num i)))
+      ((set (expr x) (to-string i)))
+         )
+(rule ((= x (Add y z))
+       (= y_expr (expr y))
+       (= z_expr (expr z)))
+      ((set (expr x) (+ "_" (to-string (gensym))))
+       (set (statements) (+ (+ "_" (to-string (gensym))) " = " y_expr " + " z_expr "
+"))
+       (set (gensym) 1))
+         )
+(rule ((= x (Mul y z))
+       (= y_expr (expr y))
+       (= z_expr (expr z)))
+      ((set (expr x) (+ "_" (to-string (gensym))))
+       (set (statements) (+ (+ "_" (to-string (gensym))) " = " y_expr " * " z_expr "
+"))
+       (set (gensym) 1))
+         )
+(let y (Mul (Num 2) (Add (Var "x") (Num 3))))
+
+(run 2)
+(extract y)
+(run 1)
+
+(check (= (expr y) "_1"))
+
+(check (= (statements) "_0 = x + 3
+_1 = 2 * _0
+"))
