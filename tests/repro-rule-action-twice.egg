@@ -31,12 +31,10 @@
          )
 (let y (Mul (Num 2) (Add (Var "x") (Num 3))))
 
-(run 2)
-(extract y)
-(run 1)
+(run 10)
 
 (check (= (expr y) "_1"))
-
+(extract (statements))
 (check (= (statements) "_0 = x + 3
 _1 = 2 * _0
 "))
