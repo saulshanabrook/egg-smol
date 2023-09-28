@@ -6,3 +6,7 @@
 (check (= (count-matches "ab ab" "ab") 2))
 ; replacing a substring
 (check (= (replace "ab ab" "ab" "cd") "cd cd"))
+; min by length
+(check (= (min-by-length "d" "bc") "d"))
+; max by length
+(check (= (max-by-length "d" "bc") "bc"))

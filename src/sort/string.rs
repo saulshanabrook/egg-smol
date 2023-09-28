@@ -37,6 +37,14 @@ impl Sort for StringSort {
         });
         typeinfo.add_primitive(Replace {
             name: "replace".into(),
+            string: self.clone(),
+        });
+        typeinfo.add_primitive(MinByLength {
+            name: "min-by-length".into(),
+            string: self.clone(),
+        });
+        typeinfo.add_primitive(MaxByLength {
+            name: "max-by-length".into(),
             string: self,
         });
     }
@@ -117,6 +125,74 @@ impl PrimitiveLike for Replace {
         let string2 = Symbol::load(&self.string, &values[1]).to_string();
         let string3 = Symbol::load(&self.string, &values[2]).to_string();
         let res: Symbol = string1.replace(&string2, &string3).into();
+        Some(Value::from(res))
+    }
+}
+
+struct MinByLength {
+    name: Symbol,
+    string: Arc<StringSort>,
+}
+
+impl PrimitiveLike for MinByLength {
+    fn name(&self) -> Symbol {
+        self.name
+    }
+
+    fn accept(&self, types: &[ArcSort]) -> Option<ArcSort> {
+        if types.len() == 2
+            && types[0].name() == self.string.name
+            && types[1].name() == self.string.name
+        {
+            Some(self.string.clone())
+        } else {
+            None
+        }
+    }
+
+    fn apply(&self, values: &[Value]) -> Option<Value> {
+        let string1 = Symbol::load(&self.string, &values[0]).to_string();
+        let string2 = Symbol::load(&self.string, &values[1]).to_string();
+        let res: Symbol = if string1.len() < string2.len() {
+            string1
+        } else {
+            string2
+        }
+        .into();
+        Some(Value::from(res))
+    }
+}
+
+struct MaxByLength {
+    name: Symbol,
+    string: Arc<StringSort>,
+}
+
+impl PrimitiveLike for MaxByLength {
+    fn name(&self) -> Symbol {
+        self.name
+    }
+
+    fn accept(&self, types: &[ArcSort]) -> Option<ArcSort> {
+        if types.len() == 2
+            && types[0].name() == self.string.name
+            && types[1].name() == self.string.name
+        {
+            Some(self.string.clone())
+        } else {
+            None
+        }
+    }
+
+    fn apply(&self, values: &[Value]) -> Option<Value> {
+        let string1 = Symbol::load(&self.string, &values[0]).to_string();
+        let string2 = Symbol::load(&self.string, &values[1]).to_string();
+        let res: Symbol = if string1.len() > string2.len() {
+            string1
+        } else {
+            string2
+        }
+        .into();
         Some(Value::from(res))
     }
 }
