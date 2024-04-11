@@ -1,11 +1,16 @@
+
 (datatype Math
   (Num i64)
   (Var String)
   (Add Math Math)
   (Mul Math Math))
 
+
+
 (rewrite (Mul (Num x) (Num y)) (Num (* x y)))
 (rewrite (Add (Num x) (Num y)) (Num (+ x y)))
+
+
 
 (datatype MathList
   (Nil)
@@ -14,89 +19,228 @@
 (sort MathFn (Fn (Math) Math))
 
 
-; (function square (Math) Math)
-; (rewrite (square x) (Mul x x))
+(function square (Math) Math)
+(rewrite (square x) (Mul x x))
 
-; (let square-fn (fn "square" ))
+(let square-fn (fn "square" ))
 
-; ;; test that we can call a function
-; (let squared-3 (app square-fn (Num 3)))
-; (check (= squared-3 (square (Num 3))))
+(push)
 
-; ;; test that we can apply a function to a list
+;; test that we can call a function
+(let squared-3 (app square-fn (Num 3)))
+(check (= squared-3 (square (Num 3))))
+(pop)
+;; test that we can apply a function to a list
 
-; (function list-map-math (MathList MathFn) MathList)
-; (rewrite (list-map-math (Nil) fn) (Nil))
-; (rewrite (list-map-math (Cons x xs) fn) (Cons (app fn x) (list-map-math xs fn)))
+(function list-map-math (MathList MathFn) MathList)
+(rewrite (list-map-math (Nil) fn) (Nil))
+(rewrite (list-map-math (Cons x xs) fn) (Cons (app fn x) (list-map-math xs fn)))
 
-; (let x (Cons (Num 1) (Cons (Num 2) (Cons (Num 3) (Nil)))))
-; (let squared-x (list-map-math x square-fn))
-; (run 100)
-; (check (= squared-x (Cons (Num 1) (Cons (Num 4) (Cons (Num 9) (Nil))))))
+(let x (Cons (Num 1) (Cons (Num 2) (Cons (Num 3) (Nil)))))
+(push)
+(let squared-x (list-map-math x square-fn))
+(run 100)
+(check (= squared-x (Cons (Num 1) (Cons (Num 4) (Cons (Num 9) (Nil))))))
+;; Test that we can partially apply a function in a rewrite rule
+(pop)
 
-; ;; Test that we can partially apply a function in a rewrite rule
+(function list-multiply-by (MathList Math) MathList)
+(rewrite (list-multiply-by l i) (list-map-math l (fn "Mul" i)))
 
-; (function list-multiply-by (MathList Math) MathList)
-; (rewrite (list-multiply-by l i) (list-map-math l (fn "Mul" i)))
+(push)
+(let doubled-x (list-multiply-by x (Num 2)))
+(run 100)
+(check (= doubled-x (Cons (Num 2) (Cons (Num 4) (Cons (Num 6) (Nil))))))
+(pop)
 
-; (let doubled-x (list-multiply-by x (Num 2)))
-; (run 100)
-; (check (= doubled-x (Cons (Num 2) (Cons (Num 4) (Cons (Num 6) (Nil))))))
+;; Test we can define a higher order compose function
 
-; ;; Test we can define a higher order compose function
+(function composed-math (MathFn MathFn Math) Math)
+(rewrite (composed-math f g v) (app f (app g v)))
 
-; (function composed-math (MathFn MathFn Math) Math)
-; (rewrite (composed-math f g v) (app f (app g v)))
+(let square-of-double (fn "composed-math" square-fn (fn "Mul" (Num 2))))
 
-; (let square-of-double (fn "composed-math" square-fn (fn "Mul" (Num 2))))
-
-; (let squared-doubled-x (list-map-math x square-of-double))
-; (run 100)
-; (check (= squared-doubled-x (Cons (Num 4) (Cons (Num 16) (Cons (Num 36) (Nil))))))
+(push)
 
 
-; ;; See that it supports primitive values as well
-; (sort i64Fun (Fn (i64) i64))
+(let squared-doubled-x (list-map-math x square-of-double))
+(run 100)
+(check (= squared-doubled-x (Cons (Num 4) (Cons (Num 16) (Cons (Num 36) (Nil))))))
+(pop)
 
-; (function composed-i64-math (MathFn i64Fun i64) Math)
-; (rewrite (composed-i64-math f g v) (app f (Num (app g v))))
+;; See that it supports primitive values as well
+(sort i64Fun (Fn (i64) i64))
 
-; (let res (composed-i64-math square-fn (fn "*" 2) 4))
-; (run 100)
-; (check (= res (Num 64)))
+(function composed-i64-math (MathFn i64Fun i64) Math)
+(rewrite (composed-i64-math f g v) (app f (Num (app g v))))
 
-;; Let's try implementing a fixpoint function and use it to define fibonacci
+(push)
+(let res (composed-i64-math square-fn (fn "*" 2) 4))
+(run 100)
+(check (= res (Num 64)))
+(pop)
+
+; Let's try implementing a fixpoint function and use it to define fibonacci
+
+(datatype Boolean
+  (B bool))
+
+
+(function eq (Math Math) Boolean)
+(rewrite (eq y y) (B true))
+(rewrite (eq (Num a) (Num b)) (B false) :when ((!= a b)))
+
+(function if (Boolean Math Math) Math)
+(rewrite (if (B true) z y) z)
+(rewrite (if (B false) z y) y)
+
+
+
+(datatype NamedFn
+  (named-fn String MathFn))
+
+(function call-named (NamedFn Math) Math)
+
+
+(ruleset call-fn)
+
+(rewrite (call-named (named-fn name fn) m) (app fn m) :ruleset call-fn)
+
+;; a string represenaiton of a program
+;; will emit statements from children twice if they appear twice in the graph, but that works fine for our example
+(datatype Program
+  ;; The expression and the statements as well
+  (P String String)
+  (AddP Program Program)
+  (FromMath Math)
+  (FromBoolean Boolean)
+  (FromFn NamedFn)
+  (Parens Program)
+  (ExprToStatements Program)
+  )
+
+(rewrite (FromMath (call-named fn m))
+  (AddP
+    (FromFn fn)
+    (Parens (FromMath m))
+
+  )
+)
+(rewrite (ExprToStatements (P a b)) (P "" a))
+(rewrite (Parens s)
+  (AddP (AddP (P "(" "")  s) (P ")" ""))
+)
+
+(rewrite (AddP (P e1 s1) (P e2 s2)) (P (+ e1 e2) (+ s1 s2)))
+
+(rewrite (FromBoolean (B true)) (P "True" ""))
+(rewrite (FromBoolean (B false)) (P "False" ""))
+(rewrite (FromMath (if b t f)) (Parens
+  (AddP (AddP (AddP (AddP (FromMath t) (P " if " "")) (FromBoolean b)) (P "else" "")) (FromMath f))
+))
+
+(rewrite (FromMath (Var a)) (P a  ""))
+(rewrite (FromMath (Add a b))
+  (Parens (AddP (AddP (FromMath a) (P " + " "")) (FromMath b)))
+)
+(rewrite (FromMath (Mul a b))
+  (Parens (AddP (AddP (FromMath a) (P " * " "")) (FromMath b)))
+)
+(rewrite (FromMath (Num a)) (P (to-string a) ""))
+
+(rewrite (FromFn (named-fn n fn))
+  (AddP (P n (+ "def " n "(x):\n    return "))
+  (ExprToStatements
+   (FromMath (app fn (Var "x")))
+  )
+))
+
+(push)
+(let square-of-double-named (named-fn "square_of_double" square-of-double))
+(let call-square-of-doubled (call-named square-of-double-named (Var "y")))
+(let res (FromMath call-square-of-doubled))
+(push)
+;; w/ evalling fn
+(run-schedule
+      (repeat 100
+            (run)
+            (run call-fn)))
+(extract res)
+(pop)
+;; w/ out evalling fn
+(run-schedule
+      (repeat 100
+            (run)))
+(extract res)
+(pop)
+
+; Let's try implementing a fixpoint function and use it to define fibonacci
 ; (ruleset fix-ruleset)
 ; (sort MathFnHigher (Fn (MathFn) MathFn))
 ; (function fix (MathFnHigher) MathFnHigher :ruleset fix-ruleset)
 ; (rewrite (fix f) (f (fix f)))
 
-(datatype Bool
-  (True)
-  (False))
 
-(function math-= (Math Math) Bool)
-(rewrite (math-= x x) (True))
-(rewrite (math-= (Num i) (Num j)) (False) :when ((!= i j)))
+; (function fib-higher (MathFn) MathFn)
 
-(function if (Bool Math Math) Math)
-(rewrite (if (True) x y) x)
-(rewrite (if (False) x y) y)
+; (rewrite (fib-higher fn) (partial fib-partial fn))
 
-(ruleset fib-ruleset)
-(function fib (Math) Math)
-(rewrite (fib i)
-  (if (math-= i (Num 0))
+; (app)
+
+
+
+(function fib-higher (MathFn) MathFn)
+
+(rewrite (fib-higher fn)  (partial call-fn (named-fn "fib" fn)))
+
+(function fib-partial (MathFn Math) Math)
+
+(rewrite (fib-partial fib-fn i)
+  (if (eq i (Num 0))
       (Num 0)
-      (if (math-= i (Num 1))
+      (if (eq i (Num 1))
           (Num 1)
-          (Add (fib (Add i (Num -1)))
-               (fib (Add i (Num -2))))))
-  :ruleset fib-ruleset)
+          (Add (app fib-fn (Add i (Num -1)))
+               (app fib-fn (Add i (Num -2)))))))
 
-(let y (fib (Num 7)))
+; (ruleset fib-ruleset)
+; (function fib (Math) Math)
+; (rewrite (fib i)
+;   (if (math-= i (Num 0))
+;       (Num 0)
+;       (if (math-= i (Num 1))
+;           (Num 1)
+;           (Add (fib (Add i (Num -1)))
+;                (fib (Add i (Num -2))))))
+;   :ruleset fib-ruleset)
 
-;; Run the fib ruleset 4 times,
-(run-schedule (repeat 7 (saturate (run)) (run fib-ruleset) (saturate (run))))
-(extract y)
-; (rewrite (fib (x)))
+; (let y (fib (Num 7)))
+
+; ;; Run the fib ruleset 4 times,
+; (run-schedule (repeat 7 (saturate (run)) (run fib-ruleset) (saturate (run))))
+; (extract y)
+; ; (rewrite (fib (x)))
+
+(function list-multiply-by (MathList Math) MathList)
+(rewrite (list-multiply-by l i) (list-map-math l (fn "Mul" i)))
+
+;; equiv
+(function list-multiply-by (MathList Math) MathList
+  (l i) (list-map-math l (lambda (x) (Mul i x))))
+;; rewritten to
+
+(function list-multiply-by (MathList Math) MathList)
+(rewrite (list-multiply-by l i) (list-map-math l (fn "Mul" i)))
+
+(function __tmp_1 (Math Math) Math (a b) (Mul a b))
+(rewrite (list-multiply-by l i) (list-map-math l (fn "__tmp_1" i)))
+
+;;
+
+
+
+(
+
+
+
+
