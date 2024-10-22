@@ -3,10 +3,12 @@
 (sort Maths (MultiSet Math))
 
 (let xs (multiset-of (Num 1) (Num 2) (Num 3)))
-
+(let xy (multiset-of (Num 3) (Num 2) (Num 1)))
+(extract xs)
+(extract xy)
 ;; verify equal to other ordering
 (check (=
-    (multiset-of (Num 3) (Num 2) (Num 1))
+    xy
     xs
 ))
 
