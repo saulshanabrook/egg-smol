@@ -85,6 +85,15 @@ pub trait PrimitiveLike {
         _sorts: (&[ArcSort], &ArcSort),
         egraph: Option<&mut EGraph>,
     ) -> Option<Value>;
+    /// Implement this to store some context from the type information as a primitive so that it can be
+    /// retrieved later during execution.
+    fn create_context(
+        &self,
+        _br: &BackendRule<'_>,
+        _args: &[core::ResolvedAtomTerm],
+    ) -> Option<QueryEntry> {
+        None
+    }
 }
 
 /// Running a schedule produces a report of the results.
@@ -1109,6 +1118,7 @@ impl EGraph {
             let mut translator = BackendRule::new(
                 self.backend.new_rule(name.into(), self.seminaive),
                 &self.functions,
+                &self.type_info,
             );
             translator.query(&query, false);
             translator.actions(&actions)?;
@@ -1151,6 +1161,7 @@ impl EGraph {
             let mut translator = BackendRule::new(
                 self.backend.new_rule("eval_actions", false),
                 &self.functions,
+                &self.type_info,
             );
             translator.actions(&actions)?;
             let id = translator.build();
@@ -1245,8 +1256,11 @@ impl EGraph {
                     Some(core_relations::Value::new_const(0))
                 }));
 
-            let mut translator =
-                BackendRule::new(self.backend.new_rule("check_facts", false), &self.functions);
+            let mut translator = BackendRule::new(
+                self.backend.new_rule("check_facts", false),
+                &self.functions,
+                &self.type_info,
+            );
             translator.query(&query, true);
             translator.rb.call_external_func(
                 ext_id,
@@ -1425,8 +1439,11 @@ impl EGraph {
                             },
                         ));
 
-                let mut translator =
-                    BackendRule::new(self.backend.new_rule("outputs", false), &self.functions);
+                let mut translator = BackendRule::new(
+                    self.backend.new_rule("outputs", false),
+                    &self.functions,
+                    &self.type_info,
+                );
                 let expr_types = exprs.iter().map(|e| e.output_type()).collect::<Vec<_>>();
                 for expr in exprs {
                     let result_var = ResolvedVar {
@@ -1701,21 +1718,24 @@ impl EGraph {
     }
 }
 
-struct BackendRule<'a> {
+pub struct BackendRule<'a> {
     pub rb: egglog_bridge::RuleBuilder<'a>,
     entries: HashMap<core::ResolvedAtomTerm, QueryEntry>,
     functions: &'a IndexMap<Symbol, Function>,
+    pub type_info: &'a TypeInfo,
 }
 
 impl<'a> BackendRule<'a> {
     fn new(
         rb: egglog_bridge::RuleBuilder<'a>,
         functions: &'a IndexMap<Symbol, Function>,
+        type_info: &'a TypeInfo,
     ) -> BackendRule<'a> {
         BackendRule {
             rb,
             functions,
             entries: Default::default(),
+            type_info,
         }
     }
 
@@ -1734,7 +1754,7 @@ impl<'a> BackendRule<'a> {
             .clone()
     }
 
-    fn func(&self, f: &typechecking::FuncType) -> egglog_bridge::FunctionId {
+    pub fn func(&self, f: &typechecking::FuncType) -> egglog_bridge::FunctionId {
         self.functions[&f.name].new_backend_id
     }
 
@@ -1743,9 +1763,13 @@ impl<'a> BackendRule<'a> {
         prim: &core::SpecializedPrimitive,
         args: &[core::ResolvedAtomTerm],
     ) -> (ExternalFunctionId, Vec<QueryEntry>, ColumnTy) {
+        let mut qe_args = self.args(args);
+        if let Some(context) = prim.primitive.0.create_context(&self, args) {
+            qe_args.push(context);
+        };
         (
             prim.primitive.1,
-            self.args(args),
+            qe_args,
             prim.output.column_ty(self.rb.egraph()),
         )
     }

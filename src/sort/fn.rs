@@ -147,6 +147,7 @@ impl Sort for FunctionSort {
 
     fn register_type(&self, backend: &mut egglog_bridge::EGraph) {
         backend.register_container_ty::<NewFunctionContainer>();
+        backend.primitives_mut().register_type::<ResolvedFunction>();
     }
 
     fn as_arc_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync + 'static> {
@@ -203,17 +204,6 @@ impl Sort for FunctionSort {
         eg.add_primitive(Ctor {
             name: "unstable-fn".into(),
             function: self.clone(),
-            type_info: eg.type_info.clone(),
-            functions: eg
-                .functions
-                .iter()
-                .map(|(name, func)| {
-                    (
-                        *name,
-                        egglog_bridge::Lookup::new(&eg.backend, func.new_backend_id),
-                    )
-                })
-                .collect(),
         });
         eg.add_primitive(Apply {
             name: "unstable-app".into(),
@@ -295,50 +285,44 @@ impl TypeConstraint for FunctionCTorTypeConstraint {
         arguments: &[AtomTerm],
         typeinfo: &TypeInfo,
     ) -> Vec<Box<dyn Constraint<AtomTerm, ArcSort>>> {
-        // construct an atom for the error values
-        let atom = core::Atom {
-            span: self.span.clone(),
-            head: self.name,
-            args: arguments.to_vec(),
-        };
-
-        // must have at least the name and the return value
-        let [head, args @ .., last] = arguments else {
+        // Must have at least one arg (plus the return value)
+        if arguments.len() < 2 {
             return vec![constraint::impossible(
-                constraint::ImpossibleConstraint::ArityMismatch { atom, expected: 2 },
+                constraint::ImpossibleConstraint::ArityMismatch {
+                    atom: core::Atom {
+                        span: self.span.clone(),
+                        head: self.name,
+                        args: arguments.to_vec(),
+                    },
+                    expected: 2,
+                },
             )];
-        };
-
-        // we return `out` at the end of the happy path
-        let mut out: Vec<Box<dyn Constraint<AtomTerm, ArcSort>>> = Vec::new();
-        out.push(constraint::assign(head.clone(), Arc::new(StringSort)));
-        out.push(constraint::assign(last.clone(), self.function.clone()));
-
-        // if first arg is a literal string name of a function we can be more specific
-        if let AtomTerm::Literal(_, Literal::String(ref name)) = head {
+        }
+        let output_sort_constraint: Box<dyn Constraint<_, ArcSort>> = constraint::assign(
+            arguments[arguments.len() - 1].clone(),
+            self.function.clone(),
+        );
+        // If first arg is a literal string and we know the name of the function and can use that to know what
+        // types to expect
+        if let AtomTerm::Literal(_, Literal::String(ref name)) = arguments[0] {
             if let Some(func_type) = typeinfo.get_func_type(name) {
-                // there must be an even number of arguments (one sort per value)
-                if args.len() % 2 != 0 {
-                    return vec![constraint::impossible(
-                        constraint::ImpossibleConstraint::ArityMismatch {
-                            atom,
-                            expected: args.len() / 2 * 2,
-                        },
-                    )];
-                }
-                let n_partial_args = args.len() / 2;
-
-                // the total number of inputs to the function must match the schema
+                // The arguments contains the return sort as well as the function name
+                let n_partial_args = arguments.len() - 2;
+                // the number of partial args must match the number of inputs from the func type minus the number from
+                // this function sort
                 if self.function.inputs.len() + n_partial_args != func_type.input.len() {
                     return vec![constraint::impossible(
                         constraint::ImpossibleConstraint::ArityMismatch {
-                            atom,
+                            atom: core::Atom {
+                                span: self.span.clone(),
+                                head: self.name,
+                                args: arguments.to_vec(),
+                            },
                             expected: self.function.inputs.len() + func_type.input.len() + 1,
                         },
                     )];
                 }
-
-                // the input and output types (after the partial args) must match
+                // the output type and input types (starting after the partial args) must match between these functions
                 let expected_output = self.function.output.clone();
                 let expected_input = self.function.inputs.clone();
                 let actual_output = func_type.output.clone();
@@ -363,28 +347,25 @@ impl TypeConstraint for FunctionCTorTypeConstraint {
                         },
                     )];
                 }
-
-                // each argument should be a string followed by a value
-                for (slice, expected_sort) in args.chunks_exact(2).zip(&func_type.input) {
-                    let [sort_name, term] = slice else {
-                        unreachable!()
-                    };
-
-                    out.push(constraint::assign(sort_name.clone(), Arc::new(StringSort)));
-                    out.push(constraint::assign(term.clone(), expected_sort.clone()));
-
-                    // if the string is a string literal, we can assert that
-                    // it contains the correct sort statically
-                    if let AtomTerm::Literal(_, Literal::String(ref sort_name)) = sort_name {
-                        if let Some(provided_sort) = typeinfo.get_sort_by_name(sort_name) {
-                            out.push(constraint::assign(term.clone(), provided_sort.clone()))
-                        }
-                    }
-                }
+                // if they match, then just make sure the partial args match as well
+                return func_type
+                    .input
+                    .iter()
+                    .take(n_partial_args)
+                    .zip(arguments.iter().skip(1))
+                    .map(|(expected_sort, actual_term)| {
+                        constraint::assign(actual_term.clone(), expected_sort.clone())
+                    })
+                    .chain(once(output_sort_constraint))
+                    .collect();
             }
         }
 
-        out
+        // Otherwise we just try assuming it's this function, we don't know if it is or not
+        vec![
+            constraint::assign(arguments[0].clone(), Arc::new(StringSort)),
+            output_sort_constraint,
+        ]
     }
 }
 
@@ -393,8 +374,12 @@ impl TypeConstraint for FunctionCTorTypeConstraint {
 struct Ctor {
     name: Symbol,
     function: Arc<FunctionSort>,
-    type_info: TypeInfo,
-    functions: HashMap<Symbol, egglog_bridge::Lookup>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ResolvedFunction {
+    pub id: ResolvedFunctionId,
+    pub do_rebuild: Vec<bool>,
 }
 
 impl PrimitiveLike for Ctor {
@@ -419,29 +404,57 @@ impl PrimitiveLike for Ctor {
         let name = Symbol::load(&StringSort, &values[0]);
 
         assert!(values.len() == sorts.0.len());
-        let zipped: Vec<_> = values
+        let args: Vec<(ArcSort, Value)> = values[1..]
             .iter()
-            .copied()
-            .zip(sorts.0.iter().cloned())
-            .skip(1) // name
-            .collect();
-
-        assert!(zipped.len() % 2 == 0);
-        let args: Vec<(ArcSort, Value)> = zipped
-            .chunks(2)
-            .map(|slice| {
-                let [(sort_name, string_sort), (value, sort)] = slice else {
-                    unreachable!()
-                };
-
-                assert_eq!(StringSort.name(), string_sort.name());
-                assert_eq!(sort.name(), Symbol::load(&StringSort, sort_name));
-
-                (sort.clone(), *value)
-            })
+            .zip(&sorts.0[1..])
+            .map(|(value, sort)| (sort.clone(), *value))
             .collect();
 
         Some(OldFunctionContainer(name, args).store(&self.function))
+    }
+
+    fn create_context(
+        &self,
+        br: &BackendRule<'_>,
+        args: &[core::ResolvedAtomTerm],
+    ) -> Option<QueryEntry> {
+        let core::ResolvedAtomTerm::Literal(_, Literal::String(name)) = args[0] else {
+            panic!("expected string literal after `unstable-fn`")
+        };
+        let input_sorts: Vec<_> = args.iter().skip(1).map(|arg| arg.output()).collect();
+        let id = if let Some(f) = br.type_info.get_func_type(&name) {
+            ResolvedFunctionId::Lookup(egglog_bridge::Lookup::new(br.rb.egraph(), br.func(f)))
+        } else if let Some(possible) = br.type_info.get_prims(&name) {
+            let mut ps: Vec<_> = possible.iter().collect();
+            ps.retain(|p| {
+                br.type_info
+                    .get_sorts::<FunctionSort>()
+                    .into_iter()
+                    .any(|f| {
+                        let types: Vec<_> = input_sorts
+                            .iter()
+                            .chain(f.inputs())
+                            .chain([&f.output()])
+                            .cloned()
+                            .collect();
+                        p.accept(&types, br.type_info)
+                    })
+            });
+            assert!(ps.len() == 1, "options for {name}: {ps:?}");
+            ResolvedFunctionId::Prim(ps.into_iter().next().unwrap().1)
+        } else {
+            panic!("no callable for {name}");
+        };
+        let do_rebuild = input_sorts
+            .iter()
+            .map(|s| s.is_eq_sort() || s.is_eq_container_sort())
+            .collect();
+
+        Some(
+            br.rb
+                .egraph()
+                .primitive_constant(ResolvedFunction { id, do_rebuild }),
+        )
     }
 }
 
@@ -457,59 +470,9 @@ impl ExternalFunction for Ctor {
         exec_state: &mut ExecutionState,
         args: &[core_relations::Value],
     ) -> Option<core_relations::Value> {
-        let (name, args) = args.split_first().unwrap();
-        let name: Symbol = exec_state.prims().unwrap(*name);
-
-        assert!(
-            args.len() % 2 == 0,
-            "expected each `unstable-fn` arg to have a sort"
-        );
-        let mut sorts = Vec::new();
-        let mut values = Vec::new();
-        for slice in args.chunks_exact(2) {
-            let [sort_name, value] = slice else {
-                unreachable!()
-            };
-
-            let sort_name: Symbol = exec_state.prims().unwrap(*sort_name);
-            let sort = self
-                .type_info
-                .get_sort_by_name(&sort_name)
-                .expect("expected a sort name, found {sort_name}");
-            sorts.push(sort.clone());
-
-            values.push(*value);
-        }
-
-        let id = if let Some(lookup) = self.functions.get(&name) {
-            ResolvedFunctionId::Lookup(*lookup)
-        } else if let Some(possible) = self.type_info.get_prims(&name) {
-            let mut ps: Vec<_> = possible.iter().collect();
-            ps.retain(|p| {
-                self.type_info
-                    .get_sorts::<FunctionSort>()
-                    .into_iter()
-                    .any(|f| {
-                        let types: Vec<_> = sorts
-                            .iter()
-                            .chain(f.inputs())
-                            .chain([&f.output()])
-                            .cloned()
-                            .collect();
-                        p.accept(&types, &self.type_info)
-                    })
-            });
-            assert!(ps.len() == 1, "options for {name}: {ps:?}");
-            ResolvedFunctionId::Prim(ps.into_iter().next().unwrap().1)
-        } else {
-            panic!("no callable for {name}");
-        };
-
-        let args = sorts
-            .into_iter()
-            .map(|s| s.is_eq_sort() || s.is_eq_container_sort())
-            .zip(values)
-            .collect();
+        let (rf, args) = args.split_first().unwrap().1.split_last().unwrap();
+        let ResolvedFunction { id, do_rebuild } = exec_state.prims().unwrap(*rf);
+        let args = do_rebuild.iter().zip(args).map(|(b, x)| (*b, *x)).collect();
         let y = NewFunctionContainer(id, args);
         Some(exec_state.clone().containers().register_val(y, exec_state))
     }
