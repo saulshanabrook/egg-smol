@@ -147,7 +147,6 @@ impl Sort for FunctionSort {
 
     fn register_type(&self, backend: &mut egglog_bridge::EGraph) {
         backend.register_container_ty::<NewFunctionContainer>();
-        backend.primitives_mut().register_type::<ResolvedFunction>();
     }
 
     fn as_arc_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync + 'static> {
@@ -376,10 +375,16 @@ struct Ctor {
     function: Arc<FunctionSort>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug)]
 pub struct ResolvedFunction {
     pub id: ResolvedFunctionId,
     pub do_rebuild: Vec<bool>,
+}
+
+impl PrimitiveContext for ResolvedFunction {
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
 }
 
 impl PrimitiveLike for Ctor {
@@ -419,7 +424,7 @@ impl PrimitiveLike for Ctor {
         type_info: &TypeInfo,
         functions: &IndexMap<Symbol, Function>,
         args: &[core::ResolvedAtomTerm],
-    ) -> Option<QueryEntry> {
+    ) -> Option<Box<dyn PrimitiveContext>> {
         let core::ResolvedAtomTerm::Literal(_, Literal::String(name)) = args[0] else {
             panic!("expected string literal after `unstable-fn`")
         };
@@ -452,7 +457,7 @@ impl PrimitiveLike for Ctor {
             .map(|s| s.is_eq_sort() || s.is_eq_container_sort())
             .collect();
 
-        Some(egraph.primitive_constant(ResolvedFunction { id, do_rebuild }))
+        Some(Box::new(ResolvedFunction { id, do_rebuild }))
     }
 }
 
@@ -468,9 +473,9 @@ impl ExternalFunction for Ctor {
         exec_state: &mut ExecutionState,
         args: &[core_relations::Value],
     ) -> Option<core_relations::Value> {
-        let (rf, args) = args.split_first().unwrap().1.split_last().unwrap();
-        let ResolvedFunction { id, do_rebuild } = exec_state.prims().unwrap(*rf);
-        let args = do_rebuild.iter().zip(args).map(|(b, x)| (*b, *x)).collect();
+        let (ResolvedFunction { id, do_rebuild }, args) =
+            retrieve_context(exec_state, args).unwrap();
+        let args = do_rebuild.iter().zip(args).map(|(b, x)| (*b, x)).collect();
         let y = NewFunctionContainer(id, args);
         Some(exec_state.clone().containers().register_val(y, exec_state))
     }
