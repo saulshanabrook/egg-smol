@@ -89,7 +89,9 @@ pub trait PrimitiveLike {
     /// retrieved later during execution.
     fn create_context(
         &self,
-        _br: &BackendRule<'_>,
+        _egraph: &egglog_bridge::EGraph,
+        _typeinfo: &TypeInfo,
+        _functions: &IndexMap<Symbol, Function>,
         _args: &[core::ResolvedAtomTerm],
     ) -> Option<QueryEntry> {
         None
@@ -1718,11 +1720,11 @@ impl EGraph {
     }
 }
 
-pub struct BackendRule<'a> {
-    pub rb: egglog_bridge::RuleBuilder<'a>,
+struct BackendRule<'a> {
+    rb: egglog_bridge::RuleBuilder<'a>,
     entries: HashMap<core::ResolvedAtomTerm, QueryEntry>,
     functions: &'a IndexMap<Symbol, Function>,
-    pub type_info: &'a TypeInfo,
+    type_info: &'a TypeInfo,
 }
 
 impl<'a> BackendRule<'a> {
@@ -1754,7 +1756,7 @@ impl<'a> BackendRule<'a> {
             .clone()
     }
 
-    pub fn func(&self, f: &typechecking::FuncType) -> egglog_bridge::FunctionId {
+    fn func(&self, f: &typechecking::FuncType) -> egglog_bridge::FunctionId {
         self.functions[&f.name].new_backend_id
     }
 
@@ -1764,7 +1766,11 @@ impl<'a> BackendRule<'a> {
         args: &[core::ResolvedAtomTerm],
     ) -> (ExternalFunctionId, Vec<QueryEntry>, ColumnTy) {
         let mut qe_args = self.args(args);
-        if let Some(context) = prim.primitive.0.create_context(&self, args) {
+        if let Some(context) =
+            prim.primitive
+                .0
+                .create_context(self.rb.egraph(), self.type_info, self.functions, args)
+        {
             qe_args.push(context);
         };
         (

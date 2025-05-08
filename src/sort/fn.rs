@@ -415,30 +415,32 @@ impl PrimitiveLike for Ctor {
 
     fn create_context(
         &self,
-        br: &BackendRule<'_>,
+        egraph: &egglog_bridge::EGraph,
+        type_info: &TypeInfo,
+        functions: &IndexMap<Symbol, Function>,
         args: &[core::ResolvedAtomTerm],
     ) -> Option<QueryEntry> {
         let core::ResolvedAtomTerm::Literal(_, Literal::String(name)) = args[0] else {
             panic!("expected string literal after `unstable-fn`")
         };
         let input_sorts: Vec<_> = args.iter().skip(1).map(|arg| arg.output()).collect();
-        let id = if let Some(f) = br.type_info.get_func_type(&name) {
-            ResolvedFunctionId::Lookup(egglog_bridge::Lookup::new(br.rb.egraph(), br.func(f)))
-        } else if let Some(possible) = br.type_info.get_prims(&name) {
+        let id = if let Some(f) = type_info.get_func_type(&name) {
+            ResolvedFunctionId::Lookup(egglog_bridge::Lookup::new(
+                egraph,
+                functions[&f.name].new_backend_id,
+            ))
+        } else if let Some(possible) = type_info.get_prims(&name) {
             let mut ps: Vec<_> = possible.iter().collect();
             ps.retain(|p| {
-                br.type_info
-                    .get_sorts::<FunctionSort>()
-                    .into_iter()
-                    .any(|f| {
-                        let types: Vec<_> = input_sorts
-                            .iter()
-                            .chain(f.inputs())
-                            .chain([&f.output()])
-                            .cloned()
-                            .collect();
-                        p.accept(&types, br.type_info)
-                    })
+                type_info.get_sorts::<FunctionSort>().into_iter().any(|f| {
+                    let types: Vec<_> = input_sorts
+                        .iter()
+                        .chain(f.inputs())
+                        .chain([&f.output()])
+                        .cloned()
+                        .collect();
+                    p.accept(&types, type_info)
+                })
             });
             assert!(ps.len() == 1, "options for {name}: {ps:?}");
             ResolvedFunctionId::Prim(ps.into_iter().next().unwrap().1)
@@ -450,11 +452,7 @@ impl PrimitiveLike for Ctor {
             .map(|s| s.is_eq_sort() || s.is_eq_container_sort())
             .collect();
 
-        Some(
-            br.rb
-                .egraph()
-                .primitive_constant(ResolvedFunction { id, do_rebuild }),
-        )
+        Some(egraph.primitive_constant(ResolvedFunction { id, do_rebuild }))
     }
 }
 
