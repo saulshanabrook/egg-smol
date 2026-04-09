@@ -1,0 +1,41 @@
+(sort MaybeFloat (Maybe f64))
+(sort MaybeInt (Maybe i64))
+
+(function none-float () MaybeFloat :no-merge)
+(set (none-float) (maybe-none))
+
+(check (= (none-float) (maybe-none)))
+(check (= (maybe-some 1.0) (maybe-some 1.0)))
+(check (= 1.0 (maybe-unwrap (maybe-some 1.0))))
+(check (= 2.0 (maybe-unwrap-or (none-float) 2.0)))
+(check (= 7 (maybe-unwrap-or (maybe-some 7) 2)))
+(fail (maybe-unwrap (none-float)))
+
+(datatype Math
+  (Num i64))
+(sort MaybeMath (Maybe Math))
+
+(let $a (Num 1))
+(let $b (Num 1))
+(union $a $b)
+(run 1)
+(check (= (maybe-some $a) (maybe-some $b)))
+
+(function merge-none () MaybeFloat :merge (maybe-f64-merge-with-tol old new 1e-6))
+(set (merge-none) (maybe-none))
+(set (merge-none) (maybe-some 1.0))
+(check (= (merge-none) (maybe-none)))
+
+(function merge-close () MaybeFloat :merge (maybe-f64-merge-with-tol old new 1e-6))
+(set (merge-close) (maybe-some 1.0))
+(set (merge-close) (maybe-some 1.0000005))
+(check (= (merge-close) (maybe-some 1.0)))
+
+(function merge-zero () MaybeFloat :merge (maybe-f64-merge-with-tol old new 1e-6))
+(set (merge-zero) (maybe-some 0.0))
+(set (merge-zero) (maybe-some -0.0))
+(check (= (merge-zero) (maybe-some 0.0)))
+
+(function merge-bad () MaybeFloat :merge (maybe-f64-merge-with-tol old new 1e-6))
+(set (merge-bad) (maybe-some 1.0))
+(fail (set (merge-bad) (maybe-some 2.0)))

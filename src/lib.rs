@@ -364,6 +364,7 @@ impl Default for EGraph {
         add_base_sort(&mut eg, BigIntSort, span!()).unwrap();
         add_base_sort(&mut eg, BigRatSort, span!()).unwrap();
         eg.type_info.add_presort::<MapSort>(span!()).unwrap();
+        eg.type_info.add_presort::<MaybeSort>(span!()).unwrap();
         eg.type_info.add_presort::<SetSort>(span!()).unwrap();
         eg.type_info.add_presort::<VecSort>(span!()).unwrap();
         eg.type_info.add_presort::<FunctionSort>(span!()).unwrap();
