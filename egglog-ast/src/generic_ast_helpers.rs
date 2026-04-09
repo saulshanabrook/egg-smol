@@ -145,9 +145,10 @@ where
         match self {
             GenericExpr::Lit(_ann, lit) => write!(f, "{lit}"),
             GenericExpr::Var(_ann, var) => write!(f, "{var}"),
-            GenericExpr::Call(_ann, op, children) => {
-                write!(f, "({} {})", op, ListDisplay(children, " "))
-            }
+            GenericExpr::Call(_ann, op, children) => match children.is_empty() {
+                true => write!(f, "({op})"),
+                false => write!(f, "({} {})", op, ListDisplay(children, " ")),
+            },
         }
     }
 }
