@@ -1,8 +1,13 @@
 (sort MaybeFloat (Maybe f64))
 (sort MaybeInt (Maybe i64))
+(sort MaybeMaybeInt (Maybe MaybeInt))
+(sort IntToInt (UnstableFn (i64) i64))
+(sort MaybeIntToInt (UnstableFn (MaybeInt) i64))
 
 (function none-float () MaybeFloat :no-merge)
 (set (none-float) (maybe-none))
+(function none-int () MaybeInt :no-merge)
+(set (none-int) (maybe-none))
 
 (check (= (none-float) (maybe-none)))
 (check (= (maybe-some 1.0) (maybe-some 1.0)))
@@ -39,3 +44,7 @@
 (function merge-bad () MaybeFloat :merge (maybe-f64-merge-with-tol old new 1e-6))
 (set (merge-bad) (maybe-some 1.0))
 (fail (set (merge-bad) (maybe-some 2.0)))
+
+(check (= (unstable-maybe-match (maybe-some 2) (unstable-fn "+" 1) 0) 3))
+(check (= (unstable-maybe-match (none-int) (unstable-fn "+" 1) 7) 7))
+(fail (unstable-maybe-match (maybe-some (none-int)) (unstable-fn "maybe-unwrap") 0))

@@ -955,8 +955,13 @@ fn mergefn_arithmetic() {
             add_func,
             vec![
                 MergeFn::Const(value_1),
-                MergeFn::Primitive(multiply_func, vec![MergeFn::Old, MergeFn::New]),
+                MergeFn::Primitive(
+                    multiply_func,
+                    vec![MergeFn::Old, MergeFn::New],
+                    vec![ColumnTy::Base(int_base), ColumnTy::Base(int_base)],
+                ),
             ],
+            vec![ColumnTy::Base(int_base), ColumnTy::Base(int_base)],
         ),
         name: "f".into(),
         can_subsume: false,
@@ -1519,7 +1524,7 @@ fn primitive_failure_panics() {
 
 #[test]
 fn panic_functions_trigger_early_stop() {
-    let db = core_relations::Database::default();
+    let mut db = core_relations::Database::default();
 
     let channel: crate::SideChannel<String> = Default::default();
     let panic_fn = super::Panic("panic".to_string(), channel.clone());
@@ -1543,6 +1548,32 @@ fn panic_functions_trigger_early_stop() {
     });
     assert!(stopped);
     assert_eq!(channel.lock().unwrap().as_deref(), Some("lazy panic"));
+
+    let channel: crate::SideChannel<String> = Default::default();
+    let int_base = db.base_values_mut().register_type::<i64>();
+    let panic_fn = super::PanicWithArgs(
+        "panic with args".to_string(),
+        vec![
+            (Some("old".to_string()), crate::ColumnTy::Base(int_base)),
+            (Some("new".to_string()), crate::ColumnTy::Base(int_base)),
+        ],
+        channel.clone(),
+    );
+    let stopped = db.with_execution_state(|state| {
+        assert!(!state.should_stop());
+        let res = core_relations::ExternalFunction::invoke(
+            &panic_fn,
+            state,
+            &[Value::new(1), Value::new(2)],
+        );
+        assert!(res.is_none());
+        state.should_stop()
+    });
+    assert!(stopped);
+    assert_eq!(
+        channel.lock().unwrap().as_deref(),
+        Some("panic with args; old=1, new=2"),
+    );
 }
 
 const _: () = {

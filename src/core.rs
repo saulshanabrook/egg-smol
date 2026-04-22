@@ -53,6 +53,11 @@ impl SpecializedPrimitive {
         self.prim_with_id.primitive.name()
     }
 
+    /// Apply this primitive to already-evaluated arguments.
+    pub fn apply(&self, exec_state: &mut ExecutionState<'_>, args: &[Value]) -> Option<Value> {
+        self.prim_with_id.primitive.apply(exec_state, args)
+    }
+
     /// Get the output sort of this primitive
     pub fn output(&self) -> &ArcSort {
         &self.output

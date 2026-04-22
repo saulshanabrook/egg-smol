@@ -10,6 +10,7 @@
 //! The value is stored similar to the `vec` sort, as an index into a set, where each item in
 //! the set is a `(Symbol, Vec<(Sort, Value)>)` pairs. The Symbol is the function name, and the `Vec<(Sort, Value)>` is
 //! the list of partially applied arguments.
+use std::any::TypeId;
 use std::sync::Mutex;
 
 use super::*;
@@ -91,7 +92,7 @@ impl Presort for FunctionSort {
     }
 
     fn reserved_primitives() -> Vec<&'static str> {
-        vec!["unstable-fn", "unstable-app"]
+        vec!["unstable-fn", "unstable-app", "unstable-catch"]
     }
 
     fn make_sort(
@@ -202,7 +203,12 @@ impl Sort for FunctionSort {
         });
 
         register_vec_primitives_for_function(eg, self.clone());
+        register_map_primitives_for_function(eg, self.clone());
+        register_set_primitives_for_function(eg, self.clone());
         register_multiset_primitives_for_function(eg, self.clone());
+        register_maybe_primitives_for_function(eg, self.clone());
+        register_pair_primitives_for_function(eg, self.clone());
+        register_catch_primitives_for_function(eg, self);
     }
 
     fn value_type(&self) -> Option<TypeId> {
@@ -259,9 +265,9 @@ impl TypeConstraint for FunctionCTorTypeConstraint {
         // If first arg is a literal string and we know the name of the function and can use that to know what
         // types to expect
         if let AtomTerm::Literal(_, Literal::String(ref name)) = arguments[0] {
+            let n_partial_args = arguments.len() - 2;
             if let Some(func_type) = typeinfo.get_func_type(name) {
                 // The arguments contains the return sort as well as the function name
-                let n_partial_args = arguments.len() - 2;
                 // the number of partial args must match the number of inputs from the func type minus the number from
                 // this function sort
                 if self.function.inputs.len() + n_partial_args != func_type.input.len() {
@@ -312,6 +318,64 @@ impl TypeConstraint for FunctionCTorTypeConstraint {
                     })
                     .chain(once(output_sort_constraint))
                     .collect();
+            }
+
+            if let Some(primitives) = typeinfo.get_prims(name) {
+                let mut primitive_constraints = Vec::with_capacity(primitives.len());
+                for primitive in primitives {
+                    let mut primitive_args = arguments[1..arguments.len() - 1].to_vec();
+                    let mut constraints = Vec::new();
+                    for (index, sort) in self
+                        .function
+                        .inputs
+                        .iter()
+                        .chain(once(&self.function.output))
+                        .enumerate()
+                    {
+                        let term = AtomTerm::Var(
+                            self.span.clone(),
+                            format!(
+                                "__unstable_fn_target_{}_{}_arg_{index}",
+                                name,
+                                self.function.name()
+                            ),
+                        );
+                        constraints.push(constraint::assign(term.clone(), sort.clone()));
+                        primitive_args.push(term);
+                    }
+                    constraints.extend(
+                        primitive
+                            .primitive
+                            .get_type_constraints(&self.span)
+                            .get(&primitive_args, typeinfo),
+                    );
+                    primitive_constraints.push(constraints);
+                }
+
+                return match primitive_constraints.len() {
+                    0 => vec![constraint::impossible(
+                        constraint::ImpossibleConstraint::ArityMismatch {
+                            atom: core::Atom {
+                                span: self.span.clone(),
+                                head: self.name.clone(),
+                                args: arguments.to_vec(),
+                            },
+                            expected: n_partial_args + self.function.inputs.len() + 2,
+                        },
+                    )],
+                    1 => once(output_sort_constraint)
+                        .chain(primitive_constraints.pop().unwrap())
+                        .collect(),
+                    _ => vec![
+                        output_sort_constraint,
+                        constraint::xor(
+                            primitive_constraints
+                                .into_iter()
+                                .map(constraint::and)
+                                .collect(),
+                        ),
+                    ],
+                };
             }
         }
 
@@ -453,5 +517,67 @@ impl FunctionContainer {
             ResolvedFunctionId::Lookup(action) => action.lookup(exec_state, &args),
             ResolvedFunctionId::Prim(prim) => exec_state.call_external_func(*prim, &args),
         }
+    }
+}
+
+pub(crate) fn try_registering_catch(eg: &mut EGraph, fn_: Arc<FunctionSort>, maybe: ArcSort) {
+    if !fn_.inputs().is_empty()
+        || maybe.value_type() != Some(TypeId::of::<MaybeContainer>())
+        || fn_.output().name() != maybe.inner_sorts()[0].name()
+    {
+        return;
+    }
+    eg.add_primitive(Catch {
+        name: "unstable-catch".into(),
+        fn_,
+        output: maybe,
+    });
+}
+
+pub(crate) fn register_catch_primitives_for_function(eg: &mut EGraph, fn_: Arc<FunctionSort>) {
+    for maybe in eg
+        .type_info
+        .get_arcsorts_by(|sort| sort.value_type() == Some(TypeId::of::<MaybeContainer>()))
+    {
+        try_registering_catch(eg, fn_.clone(), maybe);
+    }
+}
+
+#[derive(Clone)]
+struct Catch {
+    name: String,
+    fn_: Arc<FunctionSort>,
+    output: ArcSort,
+}
+
+impl Primitive for Catch {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        SimpleTypeConstraint::new(
+            self.name(),
+            vec![self.fn_.clone(), self.output.clone()],
+            span.clone(),
+        )
+        .into_box()
+    }
+
+    fn apply(&self, exec_state: &mut ExecutionState, args: &[Value]) -> Option<Value> {
+        let fc = exec_state
+            .container_values()
+            .get_val::<FunctionContainer>(args[0])?
+            .clone();
+        let maybe = MaybeContainer {
+            do_rebuild: self.fn_.output().is_eq_sort() || self.fn_.output().is_eq_container_sort(),
+            data: fc.apply(exec_state, &[]),
+        };
+        Some(
+            exec_state
+                .clone()
+                .container_values()
+                .register_val(maybe, exec_state),
+        )
     }
 }

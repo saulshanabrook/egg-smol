@@ -36,6 +36,24 @@ impl BaseSort for BigRatSort {
         add_primitive!(eg, "numer" = |a: Q| -> Z { Z::new(a.numer().clone()) });
         add_primitive!(eg, "denom" = |a: Q| -> Z { Z::new(a.denom().clone()) });
         add_primitive!(eg, "to-f64" = |a: Q| -> F { F::new(OrderedFloat(a.to_f64().unwrap())) });
+        add_primitive!(eg, "from-f64" = |a: F| -?> Q { BigRational::from_float(a.0 .0).map(Q::new) });
+        add_primitive!(eg, "bigrat-pow-const-value" = |a: F, b: Q| -?> F {{
+            let base = a.0.0;
+            if base == 0.0 {
+                if b.is_negative() {
+                    None
+                } else {
+                    let value = if b.is_zero() { 1.0 } else { 0.0 };
+                    Some(F::new(OrderedFloat(value)))
+                }
+            } else if base < 0.0 && !b.is_integer() {
+                None
+            } else {
+                let exponent = b.to_f64()?;
+                let value = base.powf(exponent);
+                (value.is_finite() && !value.is_nan()).then(|| F::new(OrderedFloat(value)))
+            }
+        }});
 
         add_primitive!(eg, "pow" = |a: Q, b: Q| -?> Q {
             if !b.is_integer() {

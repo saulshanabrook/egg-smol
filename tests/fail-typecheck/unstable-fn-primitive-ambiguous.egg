@@ -1,0 +1,4 @@
+;; There is no target function sort here, so the overloaded primitive name
+;; cannot be resolved into a concrete function container.
+
+(unstable-fn "+")

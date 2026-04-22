@@ -1,4 +1,5 @@
 use super::*;
+use std::any::TypeId;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MaybeContainer {
@@ -50,6 +51,7 @@ impl Presort for MaybeSort {
             "maybe-unwrap",
             "maybe-unwrap-or",
             "maybe-f64-merge-with-tol",
+            "unstable-maybe-match",
         ]
     }
 
@@ -140,6 +142,12 @@ impl ContainerSort for MaybeSort {
                 }
             }});
         }
+
+        let maybe = eg.type_info.get_sort_by_name(self.name()).unwrap().clone();
+        for fn_sort in eg.type_info.get_sorts::<FunctionSort>() {
+            try_registering_maybe_match(eg, maybe.clone(), fn_sort.clone());
+            try_registering_catch(eg, fn_sort, maybe.clone());
+        }
     }
 
     fn reconstruct_termdag(
@@ -165,6 +173,71 @@ impl ContainerSort for MaybeSort {
             "maybe-some".to_owned()
         } else {
             "maybe-none".to_owned()
+        }
+    }
+}
+
+pub(crate) fn try_registering_maybe_match(eg: &mut EGraph, maybe: ArcSort, fn_: Arc<FunctionSort>) {
+    if maybe.value_type() != Some(TypeId::of::<MaybeContainer>())
+        || fn_.inputs().len() != 1
+        || fn_.inputs()[0].name() != maybe.inner_sorts()[0].name()
+    {
+        return;
+    }
+    eg.add_primitive(MaybeMatch {
+        name: "unstable-maybe-match".into(),
+        maybe,
+        fn_,
+    });
+}
+
+pub(crate) fn register_maybe_primitives_for_function(eg: &mut EGraph, fn_: Arc<FunctionSort>) {
+    for maybe in eg
+        .type_info
+        .get_arcsorts_by(|sort| sort.value_type() == Some(TypeId::of::<MaybeContainer>()))
+    {
+        try_registering_maybe_match(eg, maybe, fn_.clone());
+    }
+}
+
+#[derive(Clone)]
+struct MaybeMatch {
+    name: String,
+    maybe: ArcSort,
+    fn_: Arc<FunctionSort>,
+}
+
+impl Primitive for MaybeMatch {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        SimpleTypeConstraint::new(
+            self.name(),
+            vec![
+                self.maybe.clone(),
+                self.fn_.clone(),
+                self.fn_.output(),
+                self.fn_.output(),
+            ],
+            span.clone(),
+        )
+        .into_box()
+    }
+
+    fn apply(&self, exec_state: &mut ExecutionState, args: &[Value]) -> Option<Value> {
+        let maybe = exec_state
+            .container_values()
+            .get_val::<MaybeContainer>(args[0])?
+            .clone();
+        let fc = exec_state
+            .container_values()
+            .get_val::<FunctionContainer>(args[1])?
+            .clone();
+        match maybe.data {
+            Some(value) => fc.apply(exec_state, &[value]),
+            None => Some(args[2]),
         }
     }
 }

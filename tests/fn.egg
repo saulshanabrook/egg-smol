@@ -1,0 +1,23 @@
+(sort MaybeInt (Maybe i64))
+(sort IntThunk (UnstableFn () i64))
+(sort MaybeF64 (Maybe f64))
+(sort F64Thunk (UnstableFn () f64))
+(sort F64ToF64 (UnstableFn (f64) f64))
+(sort I64ToI64 (UnstableFn (i64) i64))
+(sort MaybeUnit (Maybe Unit))
+(sort UnitThunk (UnstableFn () Unit))
+(sort UnitToF64 (UnstableFn (Unit) f64))
+
+(function none-int () MaybeInt :no-merge)
+(set (none-int) (maybe-none))
+
+(function merge-plus () i64 :merge (unstable-app (unstable-fn "+" old) new))
+(set (merge-plus) 1)
+(set (merge-plus) 2)
+(check (= (merge-plus) 3))
+
+(check (= (unstable-catch (unstable-fn "maybe-unwrap" (maybe-some 4))) (maybe-some 4)))
+(check (= (unstable-catch (unstable-fn "maybe-unwrap" (none-int))) (none-int)))
+(check (= (unstable-app (unstable-fn "+" 1.0) 2.0) 3.0))
+(check (= (unstable-catch (unstable-fn "+" 1.0 2.0)) (maybe-some 3.0)))
+(check (= (unstable-maybe-match (unstable-catch (unstable-fn "+" 1.0 2.0)) (unstable-fn "+" 4.0) 0.0) 7.0))

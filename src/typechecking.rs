@@ -743,7 +743,7 @@ impl TypeInfo {
         Ok(annotated_actions)
     }
 
-    fn typecheck_expr(
+    pub(crate) fn typecheck_expr(
         &self,
         symbol_gen: &mut SymbolGen,
         expr: &Expr,

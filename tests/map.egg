@@ -1,7 +1,348 @@
-(sort MyMap (Map i64 String))
+(sort IntMap (Map i64 i64))
+(sort Ints (MultiSet i64))
+(sort IntSet (Set i64))
+(sort IntFloatPair (Pair i64 f64))
+(sort FloatMap (Map i64 f64))
+(sort FloatValues (MultiSet f64))
+(sort RatMap (Map i64 BigRat))
+(sort RatMaps (MultiSet RatMap))
+(sort RatPoly (Map RatMap f64))
+(sort I64AddFn (UnstableFn (i64 i64) i64))
+(sort I64ToI64Fn (UnstableFn (i64) i64))
+(sort RatMapPred (UnstableFn (RatMap) Unit))
+(sort RatMapReduce (UnstableFn (RatMap RatMap) RatMap))
 
-(let $my_map1 (map-insert (map-empty) 1 "one"))
-(let $my_map2 (map-insert $my_map1 2 "two"))
+(datatype Box
+  (Wrap i64))
+(sort Boxes (MultiSet Box))
+(sort BoxSet (Set Box))
+(sort I64ToBoxFn (UnstableFn (i64) Box))
 
-(check (= "one" (map-get $my_map1 1)))
-(extract $my_map2)
+(let $zero-rat (bigrat (bigint 0) (bigint 1)))
+(let $one-rat (bigrat (bigint 1) (bigint 1)))
+(let $three-halves (bigrat (bigint 3) (bigint 2)))
+
+(let $ints-left
+  (map-insert
+    (map-insert
+      (map-empty)
+      1
+      2)
+    3
+    4))
+(let $ints-right
+  (map-insert
+    (map-insert
+      (map-empty)
+      1
+      5)
+    5
+    6))
+
+(check (= 2 (map-length $ints-left)))
+(check (= 1 (map-pick-key $ints-left)))
+(check (= 2 (multiset-length (map-keys $ints-left))))
+(check (multiset-contains (map-keys $ints-left) 1))
+(check (multiset-contains (map-keys $ints-left) 3))
+
+(check (= 7 (unstable-app (unstable-fn "+") 2 5)))
+
+(check (=
+  (map-insert
+    (map-insert
+      (map-insert
+        (map-empty)
+        1
+        7)
+      3
+      4)
+    5
+    6)
+  (map-merge-with (unstable-fn "+") $ints-left $ints-right)))
+
+(check (=
+  (map-insert
+    (map-insert
+      (map-insert
+        (map-empty)
+        1
+        7)
+      3
+      4)
+    5
+    6)
+  (map-merge-with-swapped (unstable-fn "+") $ints-right $ints-left)))
+
+(check (=
+  (map-insert
+    (map-empty)
+    1
+    7)
+  (map-intersect-with (unstable-fn "+") $ints-left $ints-right)))
+
+(check (map-contains-key-swapped 1 $ints-left))
+(check (map-not-contains-key-swapped 7 $ints-left))
+
+(let $selected-key-map
+  (map-insert
+    (map-insert
+      (map-empty)
+      1
+      0)
+    5
+    0))
+(let $selected-keys (map-keys $selected-key-map))
+(check (=
+  (map-insert
+    (map-insert
+      (map-empty)
+      1
+      7)
+    5
+    6)
+  (map-restrict-keys $selected-keys (map-merge-with (unstable-fn "+") $ints-left $ints-right))))
+
+(check (=
+  (map-insert
+    (map-empty)
+    3
+    4)
+  (map-remove-keys $selected-keys (map-merge-with (unstable-fn "+") $ints-left $ints-right))))
+
+(let $float-map
+  (map-insert
+    (map-insert
+      (map-insert
+        (map-empty)
+        1
+        0.0)
+      2
+      3.5)
+    3
+    -0.0))
+(check (=
+  (map-insert
+    (map-empty)
+    2
+    3.5)
+  (map-drop-zero-values $float-map)))
+
+(let $rat-map-with-zero
+  (map-insert
+    (map-insert
+      (map-insert
+        (map-empty)
+        1
+        $zero-rat)
+      2
+      $three-halves)
+    3
+    $zero-rat))
+(check (=
+  (map-insert
+    (map-empty)
+    2
+    $three-halves)
+  (map-drop-zero-values $rat-map-with-zero)))
+
+(let $mono-1
+  (map-insert
+    (map-insert
+      (map-empty)
+      1
+      $one-rat)
+    2
+    $one-rat))
+(let $mono-2
+  (map-insert
+    (map-insert
+      (map-empty)
+      1
+      $one-rat)
+    3
+    $one-rat))
+(let $factor
+  (map-insert
+    (map-empty)
+    1
+    $one-rat))
+
+(check (=
+  $factor
+  (map-bigrat-intersect-min $mono-1 $mono-2)))
+
+(check (=
+  (map-insert
+    (map-empty)
+    2
+    $one-rat)
+  (map-drop-zero-values (map-bigrat-subtract $factor $mono-1))))
+
+(let $poly
+  (map-insert
+    (map-insert
+      (map-empty)
+      $mono-1
+      1.0)
+    $mono-2
+    1.0))
+
+(let $selected
+  (unstable-multiset-filter
+    (unstable-fn "map-contains-key-swapped" 1)
+    (map-keys $poly)))
+
+(check (= (map-keys $poly) $selected))
+
+(check (=
+  $factor
+  (unstable-multiset-reduce
+    (unstable-fn "map-bigrat-intersect-min")
+    (multiset-pick $selected)
+    $selected)))
+
+(check (=
+  (map-insert
+    (map-insert
+      (map-empty)
+      (map-insert
+        (map-empty)
+        2
+        $one-rat)
+      1.0)
+    (map-insert
+      (map-empty)
+      3
+      $one-rat)
+    1.0)
+  (map-subtract-bigrat-from-keys
+    $factor
+    (map-restrict-keys $selected $poly))))
+
+(check (=
+  (map-empty)
+  (map-remove-keys $selected $poly)))
+
+(let $const-mono
+  (map-remove
+    (map-remove $mono-1 1)
+    2))
+(let $const-poly
+  (map-insert
+    (map-insert
+      (map-insert
+        (map-empty)
+        $mono-1
+        2.0)
+      $mono-2
+      3.0)
+    $const-mono
+    5.0))
+
+(check (=
+  (multiset-of 2.0 3.0)
+  (map-nonconst-nonunit-f64-values $const-poly)))
+
+(check (=
+  (map-insert
+    (map-insert
+      (map-insert
+        (map-empty)
+        $mono-1
+        1.0)
+      $mono-2
+      1.5)
+    $const-mono
+    2.5)
+  (map-divide-all-values-by-f64 2.0 $const-poly)))
+
+(let $mono-3
+  (map-insert
+    (map-empty)
+    4
+    $one-rat))
+(let $poly-with-remainder
+  (map-insert
+    (map-insert
+      (map-insert
+        (map-empty)
+        $mono-1
+        1.0)
+      $mono-2
+      1.0)
+    $mono-3
+    1.0))
+
+(check (=
+  (set-of 1)
+  (map-shared-factor-atoms $poly-with-remainder)))
+
+(let $mono-4
+  (map-insert
+    (map-insert
+      (map-insert
+        (map-empty)
+        1
+        $one-rat)
+      3
+      $one-rat)
+    4
+    $one-rat))
+(let $mono-5
+  (map-insert
+    (map-insert
+      (map-insert
+        (map-empty)
+        1
+        $one-rat)
+      3
+      $one-rat)
+    5
+    $one-rat))
+(let $poly-multi-shared
+  (map-insert
+    (map-insert
+      (map-insert
+        (map-empty)
+        $mono-1
+        1.0)
+      $mono-4
+      1.0)
+    $mono-5
+    1.0))
+
+(check (=
+  (set-of 1 3)
+  (map-shared-factor-atoms $poly-multi-shared)))
+
+(check (=
+  (set-of 5 6)
+  (unstable-set-map (unstable-fn "map-get" $ints-right) (set-of 1 5))))
+
+(check (=
+  (set-of 2)
+  (unstable-set-map (unstable-fn "map-get" $ints-left) (set-of 1 5))))
+
+(let $box-1 (Wrap 1))
+(let $box-2 (Wrap 2))
+(let $boxes (multiset-of $box-1 $box-2))
+(check (= $box-1 (multiset-union-values $boxes)))
+(check (= $box-2 (multiset-union-values $boxes)))
+
+(let $box-set (set-of $box-1 $box-2))
+(check (= $box-1 (set-union-values $box-set)))
+(check (= $box-2 (set-union-values $box-set)))
+
+(let $empty-box-set
+  (set-remove
+    (set-of $box-1)
+    $box-1))
+(fail (set-union-values $empty-box-set))
+
+(let $pair (pair 1 2.5))
+(check (= 1 (pair-left $pair)))
+(check (= 2.5 (pair-right $pair)))
+
+(check (present 1))
+(check (present (map-get $ints-left 1)))
+(fail (check (present (map-get $ints-left 7))))

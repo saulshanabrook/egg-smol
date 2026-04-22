@@ -70,6 +70,7 @@ impl Presort for MultiSetSort {
             "unstable-multiset-fill-index",
             "unstable-multiset-clear-index",
             "unstable-multiset-flat-map",
+            "multiset-union-values",
         ]
     }
 
@@ -179,6 +180,7 @@ impl ContainerSort for MultiSetSort {
                 multiset_of_multisets: arc.clone(),
             });
         }
+        register_map_primitives_for_multiset(eg, arc.clone());
         let all_ms_sorts = eg
             .type_info
             .get_arcsorts_by(|f| f.value_type() == Some(TypeId::of::<MultiSetContainer>()));

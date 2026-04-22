@@ -1,0 +1,14 @@
+(sort IntPair (Pair i64 i64))
+(sort MaybeInt (Maybe i64))
+(sort MaybeIntPair (Pair MaybeInt i64))
+(sort IntToInt (UnstableFn (i64) i64))
+(sort IntIntToInt (UnstableFn (i64 i64) i64))
+(sort MaybeIntToInt (UnstableFn (MaybeInt) i64))
+
+(function none-int () MaybeInt :no-merge)
+(set (none-int) (maybe-none))
+
+(check (= (unstable-pair-match (pair 2 3) (unstable-fn "+")) 5))
+(check (= (unstable-pair-map-left (pair 2 3) (unstable-fn "+" 10)) (pair 12 3)))
+(check (= (unstable-pair-map-right (pair 2 3) (unstable-fn "+" 10)) (pair 2 13)))
+(fail (unstable-pair-map-left (pair (none-int) 1) (unstable-fn "maybe-unwrap")))

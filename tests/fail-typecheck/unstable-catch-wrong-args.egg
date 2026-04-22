@@ -1,0 +1,6 @@
+;; test that unstable-catch only accepts zero-arg function containers
+
+(sort IntToInt (UnstableFn (i64) i64))
+(sort MaybeInt (Maybe i64))
+
+(unstable-catch (unstable-fn "+" 1))

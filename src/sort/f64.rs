@@ -35,6 +35,17 @@ impl BaseSort for F64Sort {
 
         add_literal_prim!(eg, "min" = |a: F, b: F| -> F { a.min(b) });
         add_literal_prim!(eg, "max" = |a: F, b: F| -> F { a.max(b) });
+        add_literal_prim!(eg, "collapse-floats-with-tol" = |a: F, b: F, tol: F| -?> F {
+            ((a.0.0 - b.0.0).abs()
+                <= tol.0.0.abs().max(f64::EPSILON * 32.0 * a.0.0.abs().max(b.0.0.abs()).max(1.0)))
+                .then(|| {
+                F::from(OrderedFloat(if a.0.0 == 0.0 && b.0.0 == 0.0 {
+                    0.0
+                } else {
+                    (a.0.0 + b.0.0) / 2.0
+                }))
+            })
+        });
         add_literal_prim!(eg, "abs" = |a: F| -> F { F::from(a.abs()) });
         add_literal_prim!(eg, "exp" = |a: F| -> F { F::from(OrderedFloat(a.exp())) });
         add_literal_prim!(eg, "log" = |a: F| -?> F {

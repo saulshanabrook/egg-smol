@@ -365,6 +365,7 @@ impl Default for EGraph {
         add_base_sort(&mut eg, BigRatSort, span!()).unwrap();
         eg.type_info.add_presort::<MapSort>(span!()).unwrap();
         eg.type_info.add_presort::<MaybeSort>(span!()).unwrap();
+        eg.type_info.add_presort::<PairSort>(span!()).unwrap();
         eg.type_info.add_presort::<SetSort>(span!()).unwrap();
         eg.type_info.add_presort::<VecSort>(span!()).unwrap();
         eg.type_info.add_presort::<FunctionSort>(span!()).unwrap();
@@ -390,6 +391,7 @@ impl Default for EGraph {
         add_primitive!(&mut eg, "value-eq" = |a: #, b: #| -?> () {
             (a == b).then_some(())
         });
+        add_primitive!(&mut eg, "present" = |_x: #| -> () { () });
         add_primitive!(&mut eg, "ordering-min" = |a: #, b: #| -> # {
             if a < b { a } else { b }
         });
@@ -628,13 +630,29 @@ impl EGraph {
                 ))
             }
             GenericExpr::Call(_, ResolvedCall::Primitive(p), args) => {
-                let translated_args = args
+                let mut translated_args = args
                     .iter()
                     .map(|arg| self.translate_expr_to_mergefn(arg))
                     .collect::<Result<Vec<_>, _>>()?;
+                if p.name() == "unstable-fn" {
+                    let Some(GenericExpr::Lit(_, Literal::String(name))) = args.first() else {
+                        return Err(Error::BackendError(
+                            "expected string literal after `unstable-fn`".into(),
+                        ));
+                    };
+                    let resolved = self.resolve_function_container_target(name, p)?;
+                    translated_args[0] =
+                        egglog_bridge::MergeFn::Const(self.backend.base_values().get(resolved));
+                }
+                let arg_tys = p
+                    .input()
+                    .iter()
+                    .map(|sort| sort.column_ty(&self.backend))
+                    .collect::<Vec<_>>();
                 Ok(egglog_bridge::MergeFn::Primitive(
                     p.external_id(),
                     translated_args,
+                    arg_tys,
                 ))
             }
         }
@@ -1023,6 +1041,26 @@ impl EGraph {
         let sort = resolved_expr.output_type();
         let value = self.eval_resolved_expr(span, &resolved_expr)?;
         Ok((sort, value))
+    }
+
+    /// Typecheck an expression under explicit local bindings.
+    pub fn typecheck_expr_with_bindings(
+        &mut self,
+        expr: &Expr,
+        bindings: &[(String, Span, ArcSort)],
+    ) -> Result<ResolvedExpr, TypeError> {
+        let mut binding_map = IndexMap::default();
+        binding_map.reserve(bindings.len());
+        for (name, span, sort) in bindings {
+            if binding_map
+                .insert(name.as_str(), (span.clone(), sort.clone()))
+                .is_some()
+            {
+                return Err(TypeError::AlreadyDefined(name.clone(), span.clone()));
+            }
+        }
+        self.type_info
+            .typecheck_expr(&mut self.parser.symbol_gen, expr, &binding_map)
     }
 
     fn eval_resolved_expr(&mut self, span: Span, expr: &ResolvedExpr) -> Result<Value, Error> {
@@ -1811,6 +1849,66 @@ impl EGraph {
         self.functions.get(name)
     }
 
+    /// Build a reusable function container for a zero-partial-arg function.
+    pub fn function_container_for_name(&self, name: &str) -> Result<FunctionContainer, Error> {
+        if self.are_proofs_enabled() {
+            return Err(Error::BackendError(
+                "function containers are not supported while proofs are enabled".into(),
+            ));
+        }
+        if let Some(func) = self.functions.get(name) {
+            return Ok(FunctionContainer(
+                ResolvedFunctionId::Lookup(egglog_bridge::TableAction::new(
+                    &self.backend,
+                    func.backend_id,
+                )),
+                Vec::new(),
+                name.to_owned(),
+            ));
+        }
+        if let Some(primitives) = self.type_info.get_prims(name) {
+            if primitives.len() != 1 {
+                return Err(Error::BackendError(format!(
+                    "ambiguous primitive function container lookup for {name}"
+                )));
+            }
+            return Ok(FunctionContainer(
+                ResolvedFunctionId::Prim(primitives[0].id),
+                Vec::new(),
+                name.to_owned(),
+            ));
+        }
+        Err(TypeError::UnboundFunction(name.to_string(), span!()).into())
+    }
+
+    /// Resolve a literal function name for an already-specialized function
+    /// container primitive.
+    pub fn resolve_function_container_target(
+        &self,
+        name: &str,
+        primitive: &SpecializedPrimitive,
+    ) -> Result<ResolvedFunction, Error> {
+        if self.are_proofs_enabled() {
+            return Err(Error::BackendError(
+                "function containers are not supported while proofs are enabled".into(),
+            ));
+        }
+        if primitive.name() != "unstable-fn" {
+            return Err(Error::BackendError(format!(
+                "expected `unstable-fn`, got `{}`",
+                primitive.name()
+            )));
+        }
+
+        resolve_function_container_target_with_context(
+            &self.backend,
+            &self.functions,
+            &self.type_info,
+            name,
+            primitive,
+        )
+    }
+
     pub fn set_report_level(&mut self, level: ReportLevel) {
         self.backend.set_report_level(level);
     }
@@ -1832,6 +1930,97 @@ impl EGraph {
     pub fn new_union_action(&self) -> egglog_bridge::UnionAction {
         UnionAction::new(&self.backend)
     }
+}
+
+fn resolve_function_container_target_with_context(
+    backend: &egglog_bridge::EGraph,
+    functions: &IndexMap<String, Function>,
+    type_info: &TypeInfo,
+    name: &str,
+    primitive: &core::SpecializedPrimitive,
+) -> Result<ResolvedFunction, Error> {
+    let Some(target_function) = type_info
+        .get_sorts::<FunctionSort>()
+        .into_iter()
+        .find(|function| function.name() == primitive.output().name())
+    else {
+        return Err(Error::BackendError(format!(
+            "`unstable-fn` output sort `{}` is not a function sort",
+            primitive.output().name()
+        )));
+    };
+
+    let partial_arcsorts: Vec<_> = primitive.input().iter().skip(1).cloned().collect();
+    let remaining_inputs = target_function.inputs();
+    let output = target_function.output();
+
+    let id = if let Some(func) = functions.get(name) {
+        let func_type = type_info
+            .get_func_type(name)
+            .ok_or_else(|| TypeError::UnboundFunction(name.to_string(), span!()))?;
+        let expected_arity = partial_arcsorts.len() + remaining_inputs.len();
+        let actual_inputs: Vec<_> = func_type.input.iter().map(|sort| sort.name()).collect();
+        let expected_inputs: Vec<_> = partial_arcsorts
+            .iter()
+            .chain(remaining_inputs)
+            .map(|sort| sort.name())
+            .collect();
+        if func_type.input.len() != expected_arity
+            || actual_inputs != expected_inputs
+            || func_type.output.name() != output.name()
+        {
+            return Err(Error::BackendError(format!(
+                "function container lookup for `{name}` expected ({}) -> {}, found ({}) -> {}",
+                expected_inputs.join(", "),
+                output.name(),
+                actual_inputs.join(", "),
+                func_type.output.name(),
+            )));
+        }
+
+        ResolvedFunctionId::Lookup(egglog_bridge::TableAction::new(backend, func.backend_id))
+    } else if let Some(primitives) = type_info.get_prims(name) {
+        let signature: Vec<_> = partial_arcsorts
+            .iter()
+            .chain(remaining_inputs)
+            .chain(once(&output))
+            .cloned()
+            .collect();
+        let candidates: Vec<_> = primitives
+            .iter()
+            .filter(|primitive| primitive.accept(&signature, type_info))
+            .collect();
+
+        match candidates.as_slice() {
+            [primitive] => ResolvedFunctionId::Prim(primitive.id),
+            [] => Err(Error::BackendError(format!(
+                "no primitive overload for `{name}` matches ({}) -> {}",
+                signature[..signature.len() - 1]
+                    .iter()
+                    .map(|sort| sort.name())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                output.name(),
+            )))?,
+            _ => Err(Error::BackendError(format!(
+                "ambiguous primitive function container lookup for `{name}` with signature ({}) -> {}",
+                signature[..signature.len() - 1]
+                    .iter()
+                    .map(|sort| sort.name())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                output.name(),
+            )))?,
+        }
+    } else {
+        Err(TypeError::UnboundFunction(name.to_string(), span!()))?
+    };
+
+    Ok(ResolvedFunction {
+        id,
+        partial_arcsorts,
+        name: name.to_owned(),
+    })
 }
 
 struct BackendRule<'a> {
@@ -1885,41 +2074,16 @@ impl<'a> BackendRule<'a> {
             let core::ResolvedAtomTerm::Literal(_, Literal::String(ref name)) = args[0] else {
                 panic!("expected string literal after `unstable-fn`")
             };
-            let id = if let Some(f) = self.type_info.get_func_type(name) {
-                ResolvedFunctionId::Lookup(egglog_bridge::TableAction::new(
-                    self.rb.egraph(),
-                    self.func(f),
-                ))
-            } else if let Some(possible) = self.type_info.get_prims(name) {
-                let mut ps: Vec<_> = possible.iter().collect();
-                ps.retain(|p| {
-                    self.type_info
-                        .get_sorts::<FunctionSort>()
-                        .into_iter()
-                        .any(|f| {
-                            let types: Vec<_> = prim
-                                .input()
-                                .iter()
-                                .skip(1)
-                                .chain(f.inputs())
-                                .chain([&f.output()])
-                                .cloned()
-                                .collect();
-                            p.accept(&types, self.type_info)
-                        })
-                });
-                assert!(ps.len() == 1, "options for {name}: {ps:?}");
-                ResolvedFunctionId::Prim(ps.into_iter().next().unwrap().id)
-            } else {
-                panic!("no callable for {name}");
-            };
-            let partial_arcsorts = prim.input().iter().skip(1).cloned().collect();
+            let resolved = resolve_function_container_target_with_context(
+                self.rb.egraph(),
+                self.functions,
+                self.type_info,
+                name,
+                prim,
+            )
+            .unwrap_or_else(|err| panic!("{err}"));
 
-            qe_args[0] = self.rb.egraph().base_value_constant(ResolvedFunction {
-                id,
-                partial_arcsorts,
-                name: name.clone(),
-            });
+            qe_args[0] = self.rb.egraph().base_value_constant(resolved);
         }
 
         (

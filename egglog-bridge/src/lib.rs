@@ -1196,7 +1196,7 @@ pub enum MergeFn {
     UnionId,
     /// The output of a merge is determined by applying the given ExternalFunction to the result
     /// of the argument merge functions.
-    Primitive(ExternalFunctionId, Vec<MergeFn>),
+    Primitive(ExternalFunctionId, Vec<MergeFn>, Vec<ColumnTy>),
     /// The output of a merge is determined by looking up the value for the given function and the
     /// given arguments in the egraph.
     Function(FunctionId, Vec<MergeFn>),
@@ -1219,7 +1219,7 @@ impl MergeFn {
     ) {
         use MergeFn::*;
         match self {
-            Primitive(_, args) => {
+            Primitive(_, args, _) => {
                 args.iter()
                     .for_each(|arg| arg.fill_deps(egraph, read_deps, write_deps));
                 write_deps.insert(egraph.uf_table);
@@ -1313,15 +1313,26 @@ impl MergeFn {
             // for each layer of nesting. This introduces a bit of overhead, particularly for cases
             // that look like `(f old new)` or `(f new old)`. We could special-case common cases in
             // this function if that overhead shows up.
-            MergeFn::Primitive(prim, args) => ResolvedMergeFn::Primitive {
+            MergeFn::Primitive(prim, args, arg_tys) => ResolvedMergeFn::Primitive {
                 prim: *prim,
                 args: args
                     .iter()
                     .map(|arg| arg.resolve(function_name, egraph))
                     .collect::<Vec<_>>(),
-                panic: egraph.new_panic(format!(
-                    "Merge function for {function_name} primitive call failed"
-                )),
+                panic: egraph.new_panic_with_args(
+                    format!("Merge function for {function_name} primitive call failed"),
+                    args.iter()
+                        .zip(arg_tys)
+                        .map(|(arg, ty)| {
+                            let label = match arg {
+                                MergeFn::Old => Some("old".to_string()),
+                                MergeFn::New => Some("new".to_string()),
+                                _ => None,
+                            };
+                            (label, *ty)
+                        })
+                        .collect(),
+                ),
             },
             MergeFn::Function(func, args) => {
                 let func_info = &egraph.funcs[*func];
@@ -1412,7 +1423,7 @@ impl ResolvedMergeFn {
                 match state.call_external_func(*prim, &args) {
                     Some(result) => result,
                     None => {
-                        let res = state.call_external_func(*panic, &[]);
+                        let res = state.call_external_func(*panic, &args);
                         assert_eq!(res, None);
                         cur
                     }
@@ -1692,6 +1703,11 @@ impl<F> Clone for LazyPanic<F> {
 #[derive(Clone)]
 struct Panic(String, SideChannel<String>);
 
+/// An external function used to store a panic message together with the
+/// arguments that triggered it.
+#[derive(Clone)]
+struct PanicWithArgs(String, Vec<(Option<String>, ColumnTy)>, SideChannel<String>);
+
 impl EGraph {
     /// Create a new `ExternalFunction` that panics with the given message.
     pub fn new_panic(&mut self, message: String) -> ExternalFunctionId {
@@ -1712,6 +1728,15 @@ impl EGraph {
         let panic = LazyPanic(Arc::new(lazy), self.panic_message.clone());
         self.db.add_external_function(Box::new(panic))
     }
+
+    pub fn new_panic_with_args(
+        &mut self,
+        message: String,
+        arg_info: Vec<(Option<String>, ColumnTy)>,
+    ) -> ExternalFunctionId {
+        let panic = PanicWithArgs(message, arg_info, self.panic_message.clone());
+        self.db.add_external_function(Box::new(panic))
+    }
 }
 
 impl ExternalFunction for Panic {
@@ -1723,6 +1748,42 @@ impl ExternalFunction for Panic {
         let mut guard = self.1.lock().unwrap();
         if guard.is_none() {
             *guard = Some(self.0.clone());
+        }
+        None
+    }
+}
+
+impl ExternalFunction for PanicWithArgs {
+    fn invoke(&self, state: &mut core_relations::ExecutionState, args: &[Value]) -> Option<Value> {
+        state.trigger_early_stop();
+        let mut guard = self.2.lock().unwrap();
+        if guard.is_none() {
+            let formatted_args = self
+                .1
+                .iter()
+                .zip(args)
+                .filter_map(|((label, ty), value)| {
+                    let label = label.as_ref()?;
+                    let rendered = match ty {
+                        ColumnTy::Base(base_ty) => format!(
+                            "{:?}",
+                            core_relations::BaseValuePrinter {
+                                base: state.base_values(),
+                                ty: *base_ty,
+                                val: *value,
+                            }
+                        ),
+                        ColumnTy::Id => format!("{value:?}"),
+                    };
+                    Some(format!("{label}={rendered}"))
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            *guard = Some(if formatted_args.is_empty() {
+                self.0.clone()
+            } else {
+                format!("{}; {formatted_args}", self.0)
+            });
         }
         None
     }
