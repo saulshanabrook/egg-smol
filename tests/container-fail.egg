@@ -20,3 +20,20 @@
 (let $resolved (l (vec-of (k (b)))))
 (run-schedule (saturate (run)))
 (check (= $resolved (b)))
+
+;; Regression for nested container dirty propagation. The inner Vec rebuilds in
+;; place, making the outer Vec newly matchable without changing the outer id.
+(sort VVE (Vec VE))
+(constructor p (VVE) E)
+
+(rewrite (p (vec-of (vec-of (b)))) (b))
+
+(push)
+(let $nested (p (vec-of (vec-of (w (b))))))
+(run-schedule (saturate (run)))
+(check (= $nested (b)))
+(pop)
+
+(let $nested-resolved (p (vec-of (vec-of (b)))))
+(run-schedule (saturate (run)))
+(check (= $nested-resolved (b)))
