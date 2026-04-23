@@ -1063,6 +1063,31 @@ impl EGraph {
             .typecheck_expr(&mut self.parser.symbol_gen, expr, &binding_map)
     }
 
+    /// Typecheck an expression under explicit local bindings and an expected output sort.
+    pub fn typecheck_expr_with_bindings_and_output(
+        &mut self,
+        expr: &Expr,
+        bindings: &[(String, Span, ArcSort)],
+        output_sort: ArcSort,
+    ) -> Result<ResolvedExpr, TypeError> {
+        let mut binding_map = IndexMap::default();
+        binding_map.reserve(bindings.len());
+        for (name, span, sort) in bindings {
+            if binding_map
+                .insert(name.as_str(), (span.clone(), sort.clone()))
+                .is_some()
+            {
+                return Err(TypeError::AlreadyDefined(name.clone(), span.clone()));
+            }
+        }
+        self.type_info.typecheck_expr_with_output(
+            &mut self.parser.symbol_gen,
+            expr,
+            &binding_map,
+            output_sort,
+        )
+    }
+
     fn eval_resolved_expr(&mut self, span: Span, expr: &ResolvedExpr) -> Result<Value, Error> {
         let unit_id = self.backend.base_values().get_ty::<()>();
         let unit_val = self.backend.base_values().get(());
