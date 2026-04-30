@@ -139,6 +139,8 @@ impl ContainerSort for PairSort {
             pair.right
         });
 
+        register_map_primitives_for_pair(eg, arc.clone());
+
         let pair = eg.type_info.get_sort_by_name(self.name()).unwrap().clone();
         for fn_sort in eg.type_info.get_sorts::<FunctionSort>() {
             try_registering_pair_match(eg, pair.clone(), fn_sort.clone());

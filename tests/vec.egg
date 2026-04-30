@@ -64,6 +64,33 @@
 ; range
 (check (= (vec-range 5) (vec-of 0 1 2 3 4)))
 
+; Test vec-foldl and vec-foldr
+(sort I64I64ToI64 (UnstableFn (i64 i64) i64))
+(check (= (vec-foldl (unstable-fn "+") 0 (vec-of 1 2 3)) 6))
+(check (= (vec-foldl (unstable-fn "*") 1 (vec-of 2 3 4)) 24))
+(check (= (vec-foldl (unstable-fn "-") 0 (vec-of 1 2 3)) -6))
+(check (= (vec-foldr (unstable-fn "-") 0 (vec-of 1 2 3)) 2))
+(check (= (vec-foldl (unstable-fn "+") 42 (vec-empty)) 42))
+(check (= (vec-foldr (unstable-fn "-") 42 (vec-empty)) 42))
+
+(function partial-plus (i64 i64) i64 :no-merge)
+(set (partial-plus 0 1) 1)
+(fail (vec-foldl (unstable-fn "partial-plus") 0 (vec-of 1 2)))
+
+; Regression: registering a new Vec sort after a compatible function sort
+; should not duplicate vec-foldl/vec-foldr overloads for existing Vec sorts.
+(push)
+(sort FoldNum)
+(sort VFoldNum (Vec FoldNum))
+(sort FoldNumFn (UnstableFn (FoldNum FoldNum) FoldNum))
+(constructor fold-num () FoldNum)
+(function fold-pick-right (FoldNum FoldNum) FoldNum :no-merge)
+(set (fold-pick-right (fold-num) (fold-num)) (fold-num))
+(sort VString (Vec String))
+(check (= (vec-foldl (unstable-fn "fold-pick-right") (fold-num) (vec-of (fold-num))) (fold-num)))
+(check (= (vec-foldr (unstable-fn "fold-pick-right") (fold-num) (vec-of (fold-num))) (fold-num)))
+(pop)
+
 ; Test unstable-vec-map
 (sort Y)
 (sort VY (Vec Y))

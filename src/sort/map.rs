@@ -64,6 +64,8 @@ impl ContainerValue for MapContainer {
 /// - `map-nonconst-nonunit-f64-values`
 /// - `map-divide-all-values-by-f64`
 /// - `map-shared-factor-atoms`
+/// - `map-integer-residual-split-candidate`
+/// - `map-factor-coef-for-integer-residual-split`
 #[derive(Clone, Debug)]
 pub struct MapSort {
     name: String,
@@ -115,6 +117,8 @@ impl Presort for MapSort {
             "map-nonconst-nonunit-f64-values",
             "map-divide-all-values-by-f64",
             "map-shared-factor-atoms",
+            "map-integer-residual-split-candidate",
+            "map-factor-coef-for-integer-residual-split",
         ]
     }
 
@@ -231,6 +235,12 @@ impl ContainerSort for MapSort {
                     outer_map: self.clone().to_arcsort(),
                     inner_map: self.key(),
                 });
+                if self.value().name() == "f64" {
+                    eg.add_primitive(FactorCoefForIntegerResidualSplit {
+                        name: "map-factor-coef-for-integer-residual-split".into(),
+                        outer_map: self.clone().to_arcsort(),
+                    });
+                }
             }
         }
 
@@ -249,6 +259,12 @@ impl ContainerSort for MapSort {
             .get_arcsorts_by(|f| f.value_type() == Some(TypeId::of::<SetContainer>()))
         {
             try_registering_map_primitives_for_set(eg, self.clone().to_arcsort(), set.clone());
+        }
+        for pair in eg
+            .type_info
+            .get_arcsorts_by(|f| f.value_type() == Some(TypeId::of::<PairContainer>()))
+        {
+            try_registering_map_primitives_for_pair(eg, self.clone().to_arcsort(), pair.clone());
         }
         for fn_sort in eg.type_info.get_sorts::<FunctionSort>() {
             try_registering_map_primitives_for_function(
@@ -307,6 +323,16 @@ pub(crate) fn register_map_primitives_for_set(eg: &mut EGraph, set: ArcSort) {
 
     for map in &all_map_sorts {
         try_registering_map_primitives_for_set(eg, map.clone(), set.clone());
+    }
+}
+
+pub(crate) fn register_map_primitives_for_pair(eg: &mut EGraph, pair: ArcSort) {
+    let all_map_sorts = eg
+        .type_info
+        .get_arcsorts_by(|f| f.value_type() == Some(TypeId::of::<MapContainer>()));
+
+    for map in &all_map_sorts {
+        try_registering_map_primitives_for_pair(eg, map.clone(), pair.clone());
     }
 }
 
@@ -441,6 +467,36 @@ fn try_registering_map_primitives_for_set(eg: &mut EGraph, map: ArcSort, set: Ar
                 set,
             });
         }
+    }
+}
+
+fn try_registering_map_primitives_for_pair(eg: &mut EGraph, map: ArcSort, pair: ArcSort) {
+    if pair.value_type() != Some(TypeId::of::<PairContainer>()) {
+        return;
+    }
+    let map_sorts = map.inner_sorts();
+    if map_sorts.len() != 2 || map_sorts[1].name() != "f64" {
+        return;
+    }
+    let inner_map = map_sorts[0].clone();
+    if inner_map.value_type() != Some(TypeId::of::<MapContainer>()) {
+        return;
+    }
+    let inner_sorts = inner_map.inner_sorts();
+    if inner_sorts.len() != 2 || inner_sorts[1].name() != "BigRat" {
+        return;
+    }
+    let pair_sorts = pair.inner_sorts();
+    if pair_sorts.len() == 2
+        && pair_sorts[0].name() == inner_map.name()
+        && pair_sorts[1].name() == map.name()
+    {
+        eg.add_primitive(IntegerResidualSplitCandidate {
+            name: "map-integer-residual-split-candidate".into(),
+            outer_map: map.clone(),
+            inner_map,
+            pair,
+        });
     }
 }
 
@@ -901,6 +957,20 @@ struct SharedFactorAtoms {
     set: ArcSort,
 }
 
+#[derive(Clone)]
+struct IntegerResidualSplitCandidate {
+    name: String,
+    outer_map: ArcSort,
+    inner_map: ArcSort,
+    pair: ArcSort,
+}
+
+#[derive(Clone)]
+struct FactorCoefForIntegerResidualSplit {
+    name: String,
+    outer_map: ArcSort,
+}
+
 impl Primitive for MapKeys {
     fn name(&self) -> &str {
         &self.name
@@ -1174,6 +1244,208 @@ impl Primitive for SharedFactorAtoms {
                 .container_values()
                 .register_val(shared, exec_state),
         )
+    }
+}
+
+fn is_exact_integer_f64(value: f64) -> bool {
+    value.is_finite() && (value as i64) as f64 == value
+}
+
+fn is_nonzero_noninteger_f64(value: f64) -> bool {
+    value != 0.0 && !is_exact_integer_f64(value)
+}
+
+fn nonempty_monomial_entries(
+    exec_state: &ExecutionState,
+    poly: &MapContainer,
+) -> Option<Vec<(Value, Value)>> {
+    let mut entries = Vec::new();
+    for (mono_value, coef_value) in &poly.data {
+        let mono = exec_state
+            .container_values()
+            .get_val::<MapContainer>(*mono_value)?;
+        if !mono.data.is_empty() {
+            entries.push((*mono_value, *coef_value));
+        }
+    }
+    Some(entries)
+}
+
+fn has_integer_residual_split_after_dividing(
+    exec_state: &ExecutionState,
+    poly: &MapContainer,
+    divisor: f64,
+) -> Option<bool> {
+    if divisor == 0.0 || !divisor.is_finite() {
+        return Some(false);
+    }
+    let entries = nonempty_monomial_entries(exec_state, poly)?;
+
+    for (factor_mono_value, factor_coef_value) in &entries {
+        let factor_coef = exec_state.base_values().unwrap::<F>(*factor_coef_value).0.0 / divisor;
+        if !factor_coef.is_finite() || !is_nonzero_noninteger_f64(factor_coef) {
+            continue;
+        }
+
+        for (split_mono_value, split_coef_value) in &entries {
+            if factor_mono_value == split_mono_value {
+                continue;
+            }
+            let split_coef = exec_state.base_values().unwrap::<F>(*split_coef_value).0.0 / divisor;
+            if !split_coef.is_finite() || !is_nonzero_noninteger_f64(split_coef) {
+                continue;
+            }
+            let residual = split_coef - factor_coef;
+            if residual != 0.0 && is_exact_integer_f64(residual) {
+                return Some(true);
+            }
+        }
+    }
+    Some(false)
+}
+
+impl Primitive for IntegerResidualSplitCandidate {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        SimpleTypeConstraint::new(
+            self.name(),
+            vec![self.outer_map.clone(), self.pair.clone()],
+            span.clone(),
+        )
+        .into_box()
+    }
+
+    fn apply(&self, exec_state: &mut ExecutionState, args: &[Value]) -> Option<Value> {
+        let poly = exec_state
+            .container_values()
+            .get_val::<MapContainer>(args[0])?
+            .clone();
+
+        let entries = nonempty_monomial_entries(exec_state, &poly)?;
+        if entries.len() < 2 || entries.len() == 4 || entries.len() > 6 {
+            return None;
+        }
+        let min_split_terms = 1;
+
+        for (factor_mono_value, factor_coef_value) in &entries {
+            let factor_mono = exec_state
+                .container_values()
+                .get_val::<MapContainer>(*factor_mono_value)?
+                .clone();
+            if factor_mono.data.is_empty() {
+                continue;
+            }
+            let factor_coef = exec_state.base_values().unwrap::<F>(*factor_coef_value).0.0;
+            if !is_nonzero_noninteger_f64(factor_coef) {
+                continue;
+            }
+
+            let one = exec_state
+                .base_values()
+                .get::<F>(F::from(OrderedFloat(1.0)));
+            let mut factored_data = BTreeMap::from([(*factor_mono_value, one)]);
+
+            for (split_mono_value, split_coef_value) in &entries {
+                if factor_mono_value == split_mono_value {
+                    continue;
+                }
+                let split_mono = exec_state
+                    .container_values()
+                    .get_val::<MapContainer>(*split_mono_value)?
+                    .clone();
+                if split_mono.data.is_empty() {
+                    continue;
+                }
+                let split_coef = exec_state.base_values().unwrap::<F>(*split_coef_value).0.0;
+                if !is_nonzero_noninteger_f64(split_coef) {
+                    continue;
+                }
+                let residual = split_coef - factor_coef;
+                if residual == 0.0 || !is_exact_integer_f64(residual) {
+                    continue;
+                }
+
+                factored_data.insert(*split_mono_value, one);
+            }
+
+            if factored_data.len() <= min_split_terms {
+                continue;
+            }
+
+            let factored_poly = MapContainer {
+                do_rebuild_keys: poly.do_rebuild_keys,
+                do_rebuild_vals: poly.do_rebuild_vals,
+                data: factored_data,
+            };
+            let factored_poly_value = exec_state
+                .clone()
+                .container_values()
+                .register_val(factored_poly, exec_state);
+            let pair = PairContainer {
+                do_rebuild_left: self.inner_map.is_eq_sort()
+                    || self.inner_map.is_eq_container_sort(),
+                do_rebuild_right: self.outer_map.is_eq_sort()
+                    || self.outer_map.is_eq_container_sort(),
+                left: *factor_mono_value,
+                right: factored_poly_value,
+            };
+            return Some(
+                exec_state
+                    .clone()
+                    .container_values()
+                    .register_val(pair, exec_state),
+            );
+        }
+        None
+    }
+}
+
+impl Primitive for FactorCoefForIntegerResidualSplit {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        SimpleTypeConstraint::new(
+            self.name(),
+            vec![
+                self.outer_map.clone(),
+                self.outer_map.inner_sorts()[1].clone(),
+            ],
+            span.clone(),
+        )
+        .into_box()
+    }
+
+    fn apply(&self, exec_state: &mut ExecutionState, args: &[Value]) -> Option<Value> {
+        let poly = exec_state
+            .container_values()
+            .get_val::<MapContainer>(args[0])?
+            .clone();
+
+        for (candidate_mono_value, candidate_coef_value) in &poly.data {
+            let candidate_mono = exec_state
+                .container_values()
+                .get_val::<MapContainer>(*candidate_mono_value)?;
+            if candidate_mono.data.is_empty() {
+                continue;
+            }
+            let candidate_coef = exec_state
+                .base_values()
+                .unwrap::<F>(*candidate_coef_value)
+                .0
+                .0;
+            if !is_nonzero_noninteger_f64(candidate_coef) {
+                continue;
+            }
+            if has_integer_residual_split_after_dividing(exec_state, &poly, candidate_coef)? {
+                return Some(*candidate_coef_value);
+            }
+        }
+        None
     }
 }
 

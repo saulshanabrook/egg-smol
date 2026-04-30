@@ -55,6 +55,8 @@ impl Presort for VecSort {
             "vec-remove",
             "vec-union",
             "vec-range",
+            "vec-foldl",
+            "vec-foldr",
             "unstable-vec-map",
         ]
     }
@@ -159,6 +161,8 @@ impl ContainerSort for VecSort {
             .type_info
             .get_arcsorts_by(|f| f.value_type() == Some(TypeId::of::<VecContainer>()));
         for fn_sort in eg.type_info.get_sorts::<FunctionSort>() {
+            try_registering_vec_foldl(eg, fn_sort.clone(), arc.clone());
+            try_registering_vec_foldr(eg, fn_sort.clone(), arc.clone());
             for vec_sort in &all_vec_sorts {
                 try_registering_vec_map(eg, fn_sort.clone(), vec_sort.clone(), arc.clone());
                 if vec_sort.name() != arc.name() {
@@ -210,11 +214,45 @@ pub(crate) fn try_registering_vec_map(
     });
 }
 
+fn try_registering_vec_foldl(eg: &mut EGraph, fn_: Arc<FunctionSort>, input_vec: ArcSort) {
+    let element = input_vec.inner_sorts()[0].clone();
+    if fn_.inputs().len() != 2
+        || fn_.inputs()[0].name() != fn_.output().name()
+        || fn_.inputs()[1].name() != element.name()
+    {
+        return;
+    }
+    eg.add_primitive(VecFoldL {
+        name: "vec-foldl".into(),
+        vec: input_vec,
+        accumulator: fn_.output(),
+        fn_,
+    });
+}
+
+fn try_registering_vec_foldr(eg: &mut EGraph, fn_: Arc<FunctionSort>, input_vec: ArcSort) {
+    let element = input_vec.inner_sorts()[0].clone();
+    if fn_.inputs().len() != 2
+        || fn_.inputs()[0].name() != element.name()
+        || fn_.inputs()[1].name() != fn_.output().name()
+    {
+        return;
+    }
+    eg.add_primitive(VecFoldR {
+        name: "vec-foldr".into(),
+        vec: input_vec,
+        accumulator: fn_.output(),
+        fn_,
+    });
+}
+
 pub(crate) fn register_vec_primitives_for_function(eg: &mut EGraph, fn_: Arc<FunctionSort>) {
     let all_vec_sorts = eg
         .type_info
         .get_arcsorts_by(|f| f.value_type() == Some(TypeId::of::<VecContainer>()));
     for input_vec in &all_vec_sorts {
+        try_registering_vec_foldl(eg, fn_.clone(), input_vec.clone());
+        try_registering_vec_foldr(eg, fn_.clone(), input_vec.clone());
         for output_vec in &all_vec_sorts {
             try_registering_vec_map(eg, fn_.clone(), input_vec.clone(), output_vec.clone());
         }
@@ -272,6 +310,98 @@ impl Primitive for VecMap {
                 .container_values()
                 .register_val(vec, exec_state),
         )
+    }
+}
+
+// (vec-foldl ([A, X] -> A) A Vec[X]) -> A
+// Folds left-to-right and fails if any callback application is undefined.
+#[derive(Clone)]
+struct VecFoldL {
+    name: String,
+    vec: ArcSort,
+    accumulator: ArcSort,
+    fn_: Arc<FunctionSort>,
+}
+
+impl Primitive for VecFoldL {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        SimpleTypeConstraint::new(
+            self.name(),
+            vec![
+                self.fn_.clone(),
+                self.accumulator.clone(),
+                self.vec.clone(),
+                self.accumulator.clone(),
+            ],
+            span.clone(),
+        )
+        .into_box()
+    }
+
+    fn apply(&self, exec_state: &mut ExecutionState, args: &[Value]) -> Option<Value> {
+        let fc = exec_state
+            .container_values()
+            .get_val::<FunctionContainer>(args[0])?
+            .clone();
+        let vec = exec_state
+            .container_values()
+            .get_val::<VecContainer>(args[2])?
+            .clone();
+        let mut acc = args[1];
+        for element in vec.data {
+            acc = fc.apply(exec_state, &[acc, element])?;
+        }
+        Some(acc)
+    }
+}
+
+// (vec-foldr ([X, A] -> A) A Vec[X]) -> A
+// Folds right-to-left and fails if any callback application is undefined.
+#[derive(Clone)]
+struct VecFoldR {
+    name: String,
+    vec: ArcSort,
+    accumulator: ArcSort,
+    fn_: Arc<FunctionSort>,
+}
+
+impl Primitive for VecFoldR {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        SimpleTypeConstraint::new(
+            self.name(),
+            vec![
+                self.fn_.clone(),
+                self.accumulator.clone(),
+                self.vec.clone(),
+                self.accumulator.clone(),
+            ],
+            span.clone(),
+        )
+        .into_box()
+    }
+
+    fn apply(&self, exec_state: &mut ExecutionState, args: &[Value]) -> Option<Value> {
+        let fc = exec_state
+            .container_values()
+            .get_val::<FunctionContainer>(args[0])?
+            .clone();
+        let vec = exec_state
+            .container_values()
+            .get_val::<VecContainer>(args[2])?
+            .clone();
+        let mut acc = args[1];
+        for element in vec.data.iter().rev() {
+            acc = fc.apply(exec_state, &[*element, acc])?;
+        }
+        Some(acc)
     }
 }
 
