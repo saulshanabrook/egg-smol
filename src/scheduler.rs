@@ -199,6 +199,11 @@ impl EGraph {
         })
     }
 
+    /// Returns true if the scheduler id exists in this e-graph state.
+    pub fn contains_scheduler(&self, scheduler_id: SchedulerId) -> bool {
+        self.schedulers.contains_key(scheduler_id)
+    }
+
     /// Removes a scheduler
     pub fn remove_scheduler(&mut self, scheduler_id: SchedulerId) -> Option<Box<dyn Scheduler>> {
         if matches!(
@@ -250,7 +255,13 @@ impl EGraph {
         let mut schedulers = std::mem::take(&mut self.schedulers);
 
         // Step 1: build all the query/action rules and worklist if have not already
-        let record = &mut schedulers[scheduler_id];
+        let Some(record) = schedulers.get_mut(scheduler_id) else {
+            self.rulesets = rulesets;
+            self.schedulers = schedulers;
+            return Err(Error::BackendError(format!(
+                "Unknown scheduler id: {scheduler_id:?}"
+            )));
+        };
         let fresh = matches!(record.scheduler, SchedulerKind::Fresh(_));
         rules.iter().for_each(|(id, rule)| {
             record
