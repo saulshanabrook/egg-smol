@@ -127,6 +127,45 @@
     3.5)
   (map-drop-zero-values $float-map)))
 
+(let $common-scale-floats
+  (map-insert
+    (map-insert
+      (map-insert
+        (map-empty)
+        1
+        0.2)
+      2
+      0.4)
+    3
+    0.6000000000000001))
+
+(check (= 0.2 (map-best-common-float-scale $common-scale-floats)))
+
+(let $pair-scale-floats
+  (map-insert
+    (map-insert
+      (map-insert
+        (map-empty)
+        1
+        0.1)
+      2
+      0.2)
+    3
+    0.333))
+
+(check (= 0.1 (map-best-common-float-scale $pair-scale-floats)))
+
+(let $no-useful-common-scale-floats
+  (map-insert
+    (map-insert
+      (map-empty)
+      1
+      0.123456)
+    2
+    0.789012))
+
+(fail (map-best-common-float-scale $no-useful-common-scale-floats))
+
 (let $rat-map-with-zero
   (map-insert
     (map-insert

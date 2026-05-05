@@ -63,6 +63,7 @@ impl ContainerValue for MapContainer {
 /// - `map-subtract-bigrat-from-keys`
 /// - `map-nonconst-nonunit-f64-values`
 /// - `map-divide-all-values-by-f64`
+/// - `map-best-common-float-scale`
 /// - `map-shared-factor-atoms`
 /// - `map-integer-residual-split-candidate`
 /// - `map-factor-coef-for-integer-residual-split`
@@ -116,6 +117,7 @@ impl Presort for MapSort {
             "map-subtract-bigrat-from-keys",
             "map-nonconst-nonunit-f64-values",
             "map-divide-all-values-by-f64",
+            "map-best-common-float-scale",
             "map-shared-factor-atoms",
             "map-integer-residual-split-candidate",
             "map-factor-coef-for-integer-residual-split",
@@ -211,6 +213,11 @@ impl ContainerSort for MapSort {
         if self.value().name() == "f64" {
             eg.add_primitive(DivideAllValuesByF64 {
                 name: "map-divide-all-values-by-f64".into(),
+                float: self.value(),
+                map: self.clone().to_arcsort(),
+            });
+            eg.add_primitive(BestCommonFloatScale {
+                name: "map-best-common-float-scale".into(),
                 float: self.value(),
                 map: self.clone().to_arcsort(),
             });
@@ -951,6 +958,13 @@ struct DivideAllValuesByF64 {
 }
 
 #[derive(Clone)]
+struct BestCommonFloatScale {
+    name: String,
+    float: ArcSort,
+    map: ArcSort,
+}
+
+#[derive(Clone)]
 struct SharedFactorAtoms {
     name: String,
     map: ArcSort,
@@ -1196,6 +1210,127 @@ impl Primitive for DivideAllValuesByF64 {
                 .container_values()
                 .register_val(divided, exec_state),
         )
+    }
+}
+
+const COMMON_FLOAT_SCALE_DECIMAL_DENOMINATOR: f64 = 1_000_000_000.0;
+const COMMON_FLOAT_SCALE_INTEGER_TOLERANCE: f64 = 1e-6;
+const COMMON_FLOAT_SCALE_MAX_INTEGER_QUOTIENT: f64 = 100.0;
+
+fn gcd_i64(mut a: i64, mut b: i64) -> i64 {
+    while b != 0 {
+        let r = a % b;
+        a = b;
+        b = r;
+    }
+    a.abs()
+}
+
+fn is_near_integer_f64(value: f64) -> bool {
+    value.is_finite() && (value - value.round()).abs() <= COMMON_FLOAT_SCALE_INTEGER_TOLERANCE
+}
+
+fn approximate_paid_float(value: f64) -> bool {
+    !is_near_integer_f64(value)
+}
+
+fn rounded_decimal_coeff(value: f64) -> Option<i64> {
+    let rounded = (value * COMMON_FLOAT_SCALE_DECIMAL_DENOMINATOR).round();
+    if !rounded.is_finite() || rounded.abs() > i64::MAX as f64 {
+        return None;
+    }
+    Some(rounded as i64)
+}
+
+fn score_common_float_scale(coeffs: &[f64], scale: f64) -> Option<(i64, i64)> {
+    if !scale.is_finite() || scale == 0.0 || is_near_integer_f64(scale) {
+        return None;
+    }
+    let old_paid = coeffs
+        .iter()
+        .filter(|coeff| approximate_paid_float(**coeff))
+        .count() as i64;
+    let mut new_paid = i64::from(approximate_paid_float(scale));
+    let mut integerized = 0;
+    for coeff in coeffs {
+        let quotient = coeff / scale;
+        if !quotient.is_finite() {
+            return None;
+        }
+        if is_near_integer_f64(quotient)
+            && quotient.round().abs() <= COMMON_FLOAT_SCALE_MAX_INTEGER_QUOTIENT
+        {
+            integerized += 1;
+        } else if approximate_paid_float(quotient) {
+            new_paid += 1;
+        }
+    }
+    if integerized < 2 || new_paid >= old_paid {
+        return None;
+    }
+    Some(((old_paid - new_paid) * 1000 + integerized, integerized))
+}
+
+impl Primitive for BestCommonFloatScale {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        SimpleTypeConstraint::new(
+            self.name(),
+            vec![self.map.clone(), self.float.clone()],
+            span.clone(),
+        )
+        .into_box()
+    }
+
+    fn apply(&self, exec_state: &mut ExecutionState, args: &[Value]) -> Option<Value> {
+        let map = exec_state
+            .container_values()
+            .get_val::<MapContainer>(args[0])?
+            .clone();
+        let mut coeffs = Vec::new();
+        let mut rounded_coeffs = Vec::new();
+        for value in map.data.values() {
+            let coeff = exec_state.base_values().unwrap::<F>(*value).0.0;
+            if !coeff.is_finite() || coeff == 0.0 {
+                continue;
+            }
+            let rounded = rounded_decimal_coeff(coeff)?;
+            if rounded == 0 {
+                continue;
+            }
+            coeffs.push(coeff);
+            rounded_coeffs.push(rounded);
+        }
+        if coeffs.len() < 2 {
+            return None;
+        }
+
+        let mut best: Option<(i64, i64, f64)> = None;
+        for i in 0..rounded_coeffs.len() {
+            for j in (i + 1)..rounded_coeffs.len() {
+                let gcd = gcd_i64(rounded_coeffs[i].abs(), rounded_coeffs[j].abs());
+                if gcd == 0 {
+                    continue;
+                }
+                let scale = gcd as f64 / COMMON_FLOAT_SCALE_DECIMAL_DENOMINATOR;
+                let Some((score, integerized)) = score_common_float_scale(&coeffs, scale) else {
+                    continue;
+                };
+                match best {
+                    Some((best_score, best_integerized, _))
+                        if (score, integerized) <= (best_score, best_integerized) => {}
+                    _ => best = Some((score, integerized, scale)),
+                }
+            }
+        }
+        let (_, _, scale) = best?;
+        let value = exec_state
+            .base_values()
+            .get::<F>(F::from(OrderedFloat(scale)));
+        Some(value)
     }
 }
 
