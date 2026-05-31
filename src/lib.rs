@@ -1018,7 +1018,6 @@ impl EGraph {
             let mut translator = BackendRule::new(
                 self.backend.new_rule(&rule.name, seminaive),
                 &self.functions,
-                &self.type_info,
                 seminaive,
             );
             translator.query(query, false);
@@ -1058,7 +1057,6 @@ impl EGraph {
         let mut translator = BackendRule::new(
             self.backend.new_rule("eval_actions", false),
             &self.functions,
-            &self.type_info,
             false, // global action context
         );
         translator.actions(&actions)?;
@@ -1139,7 +1137,6 @@ impl EGraph {
         let mut translator = BackendRule::new(
             self.backend.new_rule("eval_resolved_expr", false),
             &self.functions,
-            &self.type_info,
             false, // global action context
         );
 
@@ -1227,7 +1224,6 @@ impl EGraph {
         let mut translator = BackendRule::new(
             self.backend.new_rule("check_facts", false),
             &self.functions,
-            &self.type_info,
             false, // global query context
         );
         translator.query(&query, true);
@@ -1939,7 +1935,6 @@ struct BackendRule<'a> {
     rb: egglog_bridge::RuleBuilder<'a>,
     entries: HashMap<core::ResolvedAtomTerm, QueryEntry>,
     functions: &'a IndexMap<String, Function>,
-    type_info: &'a TypeInfo,
     /// `true` for a regular seminaive rule; `false` for any of:
     /// (a) global one-shots (`eval`, `check`, top-level actions),
     /// (b) rules with the `:naive` option,
@@ -1954,13 +1949,11 @@ impl<'a> BackendRule<'a> {
     fn new(
         rb: egglog_bridge::RuleBuilder<'a>,
         functions: &'a IndexMap<String, Function>,
-        type_info: &'a TypeInfo,
         seminaive: bool,
     ) -> BackendRule<'a> {
         BackendRule {
             rb,
             functions,
-            type_info,
             seminaive,
             entries: Default::default(),
         }
@@ -1994,22 +1987,67 @@ impl<'a> BackendRule<'a> {
     }
 
     fn entry(&mut self, x: &core::ResolvedAtomTerm) -> QueryEntry {
-        self.entries
-            .entry(x.clone())
-            .or_insert_with(|| match x {
-                core::GenericAtomTerm::Var(_, v) => self
-                    .rb
-                    .new_var_named(v.sort.column_ty(self.rb.egraph()), &v.name),
-                core::GenericAtomTerm::Literal(_, l) => literal_to_entry(self.rb.egraph(), l),
-                core::GenericAtomTerm::Global(..) => {
-                    panic!("Globals should have been desugared")
-                }
-            })
-            .clone()
+        if let Some(entry) = self.entries.get(x) {
+            return entry.clone();
+        }
+
+        let entry = match x {
+            core::GenericAtomTerm::Var(_, v) => self
+                .rb
+                .new_var_named(v.sort.column_ty(self.rb.egraph()), &v.name),
+            core::GenericAtomTerm::Literal(_, l) => literal_to_entry(self.rb.egraph(), l),
+            core::GenericAtomTerm::ResolvedFunction(_, target) => {
+                self.resolved_function_entry(target)
+            }
+            core::GenericAtomTerm::Global(..) => {
+                panic!("Globals should have been desugared")
+            }
+        };
+        self.entries.insert(x.clone(), entry.clone());
+        entry
     }
 
     fn func(&self, f: &typechecking::FuncType) -> egglog_bridge::FunctionId {
         self.functions[&f.name].backend_id
+    }
+
+    fn function_target_id(&self, target: &ResolvedFunctionTarget) -> ResolvedFunctionId {
+        match &target.kind {
+            ResolvedFunctionTargetKind::Function(f) => {
+                let action = egglog_bridge::TableAction::new(self.rb.egraph(), self.func(f));
+                match f.subtype {
+                    ast::FunctionSubtype::Constructor => ResolvedFunctionId::Constructor(action),
+                    ast::FunctionSubtype::Custom => ResolvedFunctionId::Function(action),
+                }
+            }
+            ResolvedFunctionTargetKind::Primitive { context_ids } => {
+                ResolvedFunctionId::Primitive {
+                    context_ids: context_ids.clone(),
+                }
+            }
+        }
+    }
+
+    fn resolved_function_entry(&mut self, target: &ResolvedFunctionTarget) -> QueryEntry {
+        let id = self.function_target_id(target);
+
+        // Pre-register a panic id used by `FunctionContainer::apply`
+        // when the wrapped function is applied in a context that
+        // doesn't admit it. Triggered at runtime via the egglog
+        // panic side channel so misuse surfaces as an `Err` from
+        // `run_rules` rather than a thread unwind.
+        let panic_id = self.rb.new_panic(format!(
+            "unstable-fn over `{}` was applied in a context where its wrapped \
+             function is not valid for this call site, if in a rule, add :naive.",
+            target.name
+        ));
+
+        self.rb.egraph().base_value_constant(ResolvedFunction {
+            id,
+            partial_arcsorts: target.partial_arcsorts.clone(),
+            name: target.name.clone(),
+            panic_id,
+        })
     }
 
     fn prim(
@@ -2023,89 +2061,7 @@ impl<'a> BackendRule<'a> {
         // onto the state wrapper when invoked.
         let resolved_id = prim.external_id(ctx);
 
-        let mut qe_args = self.args(args);
-
-        if prim.name() == "unstable-fn" {
-            let core::ResolvedAtomTerm::Literal(_, Literal::String(ref name)) = args[0] else {
-                panic!("expected string literal after `unstable-fn`")
-            };
-            let id = if let Some(f) = self.type_info.get_func_type(name) {
-                // Distinguish constructor-table lookups (write-on-miss
-                // via `lookup_or_insert`) from custom-function lookups
-                // (pure read via `lookup`). `FunctionContainer::apply`
-                // uses this distinction to allow `unstable-app` over a
-                // custom function in any DB-read-capable context (e.g.
-                // global checks) while refusing constructors outright
-                // anywhere they can't mint — a no-mint constructor
-                // would silently miss instead of producing the eclass
-                // the user asked for.
-                let action = egglog_bridge::TableAction::new(self.rb.egraph(), self.func(f));
-                match f.subtype {
-                    ast::FunctionSubtype::Constructor => ResolvedFunctionId::Constructor(action),
-                    ast::FunctionSubtype::Custom => ResolvedFunctionId::Function(action),
-                }
-            } else {
-                let fn_sort = Arc::downcast::<FunctionSort>(prim.output().clone().as_arc_any())
-                    .unwrap_or_else(|_| panic!("expected `unstable-fn` to return a function sort"));
-                let types: Vec<_> = prim
-                    .input()
-                    .iter()
-                    .skip(1)
-                    .cloned()
-                    .chain(fn_sort.inputs().iter().cloned())
-                    .chain(std::iter::once(fn_sort.output()))
-                    .collect();
-                // Bake every exact-signature registration. The
-                // build-site `ctx` here is intentionally unused: the
-                // *application*-time context (carried on `state.ctx`
-                // by the wrapping HOF body) selects which candidate
-                // dispatches at runtime. Filtering by build-site ctx
-                // would trap an `unstable-fn` value in the context it
-                // was constructed in (e.g. a `let`-bound function value
-                // built at top-level `Full` couldn't be applied later
-                // from a `Read` query).
-                let ps: Vec<_> = self
-                    .type_info
-                    .get_prims(name)
-                    .into_iter()
-                    .flatten()
-                    .filter(|p| p.accept(&types, self.type_info))
-                    .collect();
-                let context_ids = enum_map::EnumMap::from_fn(|runtime_ctx| {
-                    let mut ids = ps.iter().filter_map(|p| p.context_ids[runtime_ctx]);
-                    match (ids.next(), ids.next()) {
-                        (None, _) => None,
-                        (Some(id), None) => Some(id),
-                        (Some(_), Some(_)) => panic!(
-                            "Ambiguous primitive resolution for {name:?} in unstable-fn context {runtime_ctx:?}"
-                        ),
-                    }
-                });
-                assert!(
-                    context_ids.iter().any(|(_, id)| id.is_some()),
-                    "no callable for {name}"
-                );
-                ResolvedFunctionId::Primitive { context_ids }
-            };
-            let partial_arcsorts = prim.input().iter().skip(1).cloned().collect();
-
-            // Pre-register a panic id used by `FunctionContainer::apply`
-            // when the wrapped function is applied in a context that
-            // doesn't admit it. Triggered at runtime via the egglog
-            // panic side channel so misuse surfaces as an `Err` from
-            // `run_rules` rather than a thread unwind.
-            let panic_id = self.rb.new_panic(format!(
-                "unstable-fn over `{name}` was applied in a context where its wrapped \
-                 function is not valid for this call site, if in a rule, add :naive."
-            ));
-
-            qe_args[0] = self.rb.egraph().base_value_constant(ResolvedFunction {
-                id,
-                partial_arcsorts,
-                name: name.clone(),
-                panic_id,
-            });
-        }
+        let qe_args = self.args(args);
 
         (
             resolved_id,

@@ -8,7 +8,8 @@ pub mod remove_globals;
 use std::cmp::max;
 
 use crate::core::{
-    GenericAtom, GenericAtomTerm, GenericExprExt, HeadOrEq, Query, ResolvedCall, ResolvedCoreRule,
+    CoreTermHead, GenericAtom, GenericAtomTerm, GenericExprExt, HeadOrEq, Query, ResolvedCall,
+    ResolvedCoreRule,
 };
 use crate::*;
 pub use egglog_ast::generic_ast::{
@@ -1384,7 +1385,7 @@ pub struct Facts<Head, Leaf>(pub Vec<GenericFact<Head, Leaf>>);
 
 impl<Head, Leaf> Facts<Head, Leaf>
 where
-    Head: Clone + Display,
+    Head: Clone + Display + CoreTermHead<Leaf>,
     Leaf: Clone + PartialEq + Eq + Display + Hash,
 {
     /// Flattens a list of facts into a Query.

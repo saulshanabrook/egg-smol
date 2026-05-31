@@ -1,0 +1,6 @@
+---
+source: tests/files.rs
+expression: err_msg
+---
+In 5:14-19 of unstable-fn-nonliteral-target.egg: target
+`unstable-fn` target must be a string literal

@@ -915,6 +915,15 @@ fn get_atom_application_constraints(
     // (where each instantiation is a vec of constraints, thus vec of vec)
     // into `xor_constraints`.
     // `constraint::xor` means one and only one of the instantiation can hold.
+    if head == "unstable-fn"
+        && let Some(target) = args.first()
+        && !matches!(target, AtomTerm::Literal(_, Literal::String(_)))
+    {
+        return Err(TypeError::UnstableFnTargetMustBeStringLiteral(
+            target.span().clone(),
+        ));
+    }
+
     let mut xor_constraints: Vec<Vec<Box<dyn Constraint<AtomTerm, ArcSort>>>> = vec![];
 
     // function atom constraints
@@ -991,6 +1000,7 @@ fn get_literal_and_global_constraints<'a>(
                     panic!("All global variables should be bound before type checking")
                 }
             }
+            AtomTerm::ResolvedFunction(..) => None,
         }
     })
 }
@@ -1207,7 +1217,9 @@ pub(crate) fn grounded_check(
         if add_global_and_literal {
             for arg in atom.args.iter() {
                 match arg {
-                    ResolvedAtomTerm::Global(..) | ResolvedAtomTerm::Literal(..) => {
+                    ResolvedAtomTerm::Global(..)
+                    | ResolvedAtomTerm::Literal(..)
+                    | ResolvedAtomTerm::ResolvedFunction(..) => {
                         problem.constraints.push(assign(arg.clone(), ()));
                     }
                     ResolvedAtomTerm::Var(..) => {}

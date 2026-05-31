@@ -391,6 +391,99 @@ impl PurePrim for Ctor {
     }
 }
 
+/// Backend-free target chosen for an `unstable-fn` constructor call.
+/// Backend lowering turns this into a runtime [`ResolvedFunction`].
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ResolvedFunctionTargetKind {
+    Function(crate::typechecking::FuncType),
+    Primitive {
+        context_ids: EnumMap<crate::Context, Option<ExternalFunctionId>>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct ResolvedFunctionTarget {
+    pub name: String,
+    pub partial_arcsorts: Vec<ArcSort>,
+    pub kind: ResolvedFunctionTargetKind,
+}
+
+impl ResolvedFunctionTarget {
+    pub(crate) fn resolve(
+        name: &str,
+        partial_arcsorts: Vec<ArcSort>,
+        function: &FunctionSort,
+        type_info: &TypeInfo,
+    ) -> Self {
+        let kind = if let Some(func_type) = type_info.get_func_type(name) {
+            ResolvedFunctionTargetKind::Function(func_type.clone())
+        } else {
+            let fn_signature: Vec<_> = partial_arcsorts
+                .iter()
+                .chain(function.inputs())
+                .chain(once(&function.output))
+                .cloned()
+                .collect();
+            let candidates: Vec<_> = type_info
+                .get_prims(name)
+                .into_iter()
+                .flatten()
+                .filter(|p| p.accept(&fn_signature, type_info))
+                .collect();
+            // Store every exact-signature registration. `FunctionContainer::apply`
+            // selects the id for its application-time context, so the value can
+            // flow across contexts instead of being tied to its build site.
+            let context_ids = enum_map::EnumMap::from_fn(|runtime_ctx| {
+                let mut ids = candidates.iter().filter_map(|p| p.context_ids[runtime_ctx]);
+                match (ids.next(), ids.next()) {
+                    (None, _) => None,
+                    (Some(id), None) => Some(id),
+                    (Some(_), Some(_)) => panic!(
+                        "Ambiguous primitive resolution for {name:?} in unstable-fn context {runtime_ctx:?}"
+                    ),
+                }
+            });
+            assert!(
+                context_ids.iter().any(|(_, id)| id.is_some()),
+                "no callable for {name}"
+            );
+            ResolvedFunctionTargetKind::Primitive { context_ids }
+        };
+
+        Self {
+            name: name.to_owned(),
+            partial_arcsorts,
+            kind,
+        }
+    }
+}
+
+impl PartialEq for ResolvedFunctionTarget {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.kind == other.kind
+            && self.partial_arcsorts.len() == other.partial_arcsorts.len()
+            && self
+                .partial_arcsorts
+                .iter()
+                .zip(&other.partial_arcsorts)
+                .all(|(a, b)| a.name() == b.name())
+    }
+}
+
+impl Eq for ResolvedFunctionTarget {}
+
+impl Hash for ResolvedFunctionTarget {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+        self.kind.hash(state);
+        self.partial_arcsorts.len().hash(state);
+        for sort in &self.partial_arcsorts {
+            sort.name().hash(state);
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ResolvedFunction {
     pub id: ResolvedFunctionId,

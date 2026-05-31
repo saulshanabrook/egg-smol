@@ -1,0 +1,5 @@
+;; test that unstable-fn targets must be statically known
+
+(sort Fn (UnstableFn (i64) i64))
+(let target "+")
+(unstable-fn target)

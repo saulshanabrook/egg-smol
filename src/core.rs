@@ -239,6 +239,7 @@ pub enum GenericAtomTerm<Leaf> {
     Var(Span, Leaf),
     Literal(Span, Literal),
     Global(Span, Leaf),
+    ResolvedFunction(Span, ResolvedFunctionTarget),
 }
 
 // Ignores annotations for equality and hasing
@@ -251,6 +252,10 @@ where
             (GenericAtomTerm::Var(_, v1), GenericAtomTerm::Var(_, v2)) => v1 == v2,
             (GenericAtomTerm::Literal(_, l1), GenericAtomTerm::Literal(_, l2)) => l1 == l2,
             (GenericAtomTerm::Global(_, g1), GenericAtomTerm::Global(_, g2)) => g1 == g2,
+            (
+                GenericAtomTerm::ResolvedFunction(_, f1),
+                GenericAtomTerm::ResolvedFunction(_, f2),
+            ) => f1 == f2,
             _ => false,
         }
     }
@@ -267,6 +272,7 @@ where
             GenericAtomTerm::Var(_, v) => v.hash(state),
             GenericAtomTerm::Literal(_, l) => l.hash(state),
             GenericAtomTerm::Global(_, g) => g.hash(state),
+            GenericAtomTerm::ResolvedFunction(_, f) => f.hash(state),
         }
     }
 }
@@ -280,6 +286,7 @@ impl<Leaf> GenericAtomTerm<Leaf> {
             GenericAtomTerm::Var(span, _) => span,
             GenericAtomTerm::Literal(span, _) => span,
             GenericAtomTerm::Global(span, _) => span,
+            GenericAtomTerm::ResolvedFunction(span, _) => span,
         }
     }
 }
@@ -290,6 +297,9 @@ impl<Leaf: Clone> GenericAtomTerm<Leaf> {
             GenericAtomTerm::Var(span, v) => GenericExpr::Var(span.clone(), v.clone()),
             GenericAtomTerm::Literal(span, l) => GenericExpr::Lit(span.clone(), l.clone()),
             GenericAtomTerm::Global(span, v) => GenericExpr::Var(span.clone(), v.clone()),
+            GenericAtomTerm::ResolvedFunction(..) => {
+                panic!("resolved function targets do not have a surface expression")
+            }
         }
     }
 }
@@ -300,6 +310,7 @@ impl ResolvedAtomTerm {
             ResolvedAtomTerm::Var(_, v) => v.sort.clone(),
             ResolvedAtomTerm::Literal(_, l) => literal_sort(l),
             ResolvedAtomTerm::Global(_, v) => v.sort.clone(),
+            ResolvedAtomTerm::ResolvedFunction(..) => StringSort.to_arcsort(),
         }
     }
 }
@@ -310,6 +321,7 @@ impl std::fmt::Display for AtomTerm {
             AtomTerm::Var(_, v) => write!(f, "{v}"),
             AtomTerm::Literal(_, lit) => write!(f, "{lit}"),
             AtomTerm::Global(_, g) => write!(f, "{g}"),
+            AtomTerm::ResolvedFunction(_, target) => write!(f, "<resolved-fn {}>", target.name),
         }
     }
 }
@@ -339,6 +351,7 @@ where
             GenericAtomTerm::Var(_, v) => Some(v.clone()),
             GenericAtomTerm::Literal(..) => None,
             GenericAtomTerm::Global(..) => None,
+            GenericAtomTerm::ResolvedFunction(..) => None,
         })
     }
 
@@ -352,6 +365,7 @@ where
                 }
                 GenericAtomTerm::Literal(..) => (),
                 GenericAtomTerm::Global(..) => (),
+                GenericAtomTerm::ResolvedFunction(..) => (),
             }
         }
     }
@@ -477,6 +491,52 @@ impl<Leaf: Clone> Query<ResolvedCall, Leaf> {
     }
 }
 
+pub trait CoreTermHead<Leaf>: Clone + Display {
+    fn lower_atom_args(
+        &self,
+        span: &Span,
+        args: Vec<GenericAtomTerm<Leaf>>,
+        typeinfo: &TypeInfo,
+    ) -> Vec<GenericAtomTerm<Leaf>>;
+}
+
+impl CoreTermHead<String> for String {
+    fn lower_atom_args(
+        &self,
+        _span: &Span,
+        args: Vec<GenericAtomTerm<String>>,
+        _typeinfo: &TypeInfo,
+    ) -> Vec<GenericAtomTerm<String>> {
+        args
+    }
+}
+
+impl CoreTermHead<ResolvedVar> for ResolvedCall {
+    fn lower_atom_args(
+        &self,
+        span: &Span,
+        mut args: Vec<GenericAtomTerm<ResolvedVar>>,
+        typeinfo: &TypeInfo,
+    ) -> Vec<GenericAtomTerm<ResolvedVar>> {
+        let ResolvedCall::Primitive(prim) = self else {
+            return args;
+        };
+        if prim.name() != "unstable-fn" {
+            return args;
+        }
+
+        let Some(GenericAtomTerm::Literal(_, Literal::String(name))) = args.first() else {
+            panic!("`unstable-fn` target should be rejected before core lowering")
+        };
+        let fn_sort = Arc::downcast::<FunctionSort>(prim.output().clone().as_arc_any())
+            .unwrap_or_else(|_| panic!("expected `unstable-fn` to return a function sort"));
+        let partial_arcsorts = prim.input().iter().skip(1).cloned().collect();
+        let target = ResolvedFunctionTarget::resolve(name, partial_arcsorts, &fn_sort, typeinfo);
+        args[0] = GenericAtomTerm::ResolvedFunction(span.clone(), target);
+        args
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum GenericCoreAction<Head, Leaf> {
     Let(Span, Leaf, Head, Vec<GenericAtomTerm<Leaf>>),
@@ -529,6 +589,7 @@ where
             GenericAtomTerm::Var(_, v) => Some(v.clone()),
             GenericAtomTerm::Literal(..) => None,
             GenericAtomTerm::Global(..) => None,
+            GenericAtomTerm::ResolvedFunction(..) => None,
         };
 
         let add_from_atom = |free_vars: &mut HashSet<Leaf>, at: &GenericAtomTerm<Leaf>| {
@@ -610,14 +671,14 @@ pub(crate) trait GenericActionsExt<Head, Leaf> {
         ctx: &mut CoreActionContext<'_, Head, Leaf, FG>,
     ) -> Result<(GenericCoreActions<Head, Leaf>, MappedActions<Head, Leaf>), TypeError>
     where
-        Head: Clone + Display + IsFunc,
+        Head: Clone + Display + IsFunc + CoreTermHead<Leaf>,
         Leaf: Clone + PartialEq + Eq + Display + Hash,
         FG: FreshGen<Head, Leaf>;
 }
 
 impl<Head, Leaf> GenericActionsExt<Head, Leaf> for GenericActions<Head, Leaf>
 where
-    Head: Clone + Display + IsFunc,
+    Head: Clone + Display + IsFunc + CoreTermHead<Leaf>,
     Leaf: Clone + PartialEq + Eq + Display + Hash,
 {
     #[allow(clippy::type_complexity)]
@@ -626,7 +687,7 @@ where
         ctx: &mut CoreActionContext<'_, Head, Leaf, FG>,
     ) -> Result<(GenericCoreActions<Head, Leaf>, MappedActions<Head, Leaf>), TypeError>
     where
-        Head: Clone + Display + IsFunc,
+        Head: Clone + Display + IsFunc + CoreTermHead<Leaf>,
         Leaf: Clone + PartialEq + Eq + Display + Hash,
         FG: FreshGen<Head, Leaf>,
     {
@@ -776,7 +837,7 @@ where
 
 pub(crate) trait GenericExprExt<Head, Leaf>
 where
-    Head: Clone + Display,
+    Head: Clone + Display + CoreTermHead<Leaf>,
     Leaf: Clone + PartialEq + Eq + Display + Hash,
 {
     fn to_query(
@@ -797,7 +858,7 @@ where
 
 impl<Head, Leaf> GenericExprExt<Head, Leaf> for GenericExpr<Head, Leaf>
 where
-    Head: Clone + Display,
+    Head: Clone + Display + CoreTermHead<Leaf>,
     Leaf: Clone + PartialEq + Eq + Display + Hash,
 {
     fn to_query(
@@ -809,7 +870,7 @@ where
         MappedExpr<Head, Leaf>,
     )
     where
-        Head: Clone + Display,
+        Head: Clone + Display + CoreTermHead<Leaf>,
         Leaf: Clone + PartialEq + Eq + Display + Hash,
     {
         match self {
@@ -829,7 +890,7 @@ where
                 }
                 let args = {
                     new_children.push(GenericAtomTerm::Var(span.clone(), fresh.clone()));
-                    new_children
+                    f.lower_atom_args(span, new_children, typeinfo)
                 };
                 atoms.push(GenericAtom {
                     span: span.clone(),
@@ -874,6 +935,7 @@ where
                 }
                 let var = ctx.fresh_gen.fresh(f);
                 ctx.binding.insert(var.clone());
+                let norm_args = f.lower_atom_args(span, norm_args, typeinfo);
                 out_actions.push(GenericCoreAction::Let(
                     span.clone(),
                     var.clone(),
@@ -1089,13 +1151,13 @@ pub(crate) trait GenericRuleExt<Head, Leaf> {
         union_to_set_optimization: bool,
     ) -> Result<GenericCoreRule<HeadOrEq<Head>, Head, Leaf>, TypeError>
     where
-        Head: Clone + Display + IsFunc,
+        Head: Clone + Display + IsFunc + CoreTermHead<Leaf>,
         Leaf: Clone + PartialEq + Eq + Display + Hash + Debug;
 }
 
 impl<Head, Leaf> GenericRuleExt<Head, Leaf> for GenericRule<Head, Leaf>
 where
-    Head: Clone + Display + IsFunc,
+    Head: Clone + Display + IsFunc + CoreTermHead<Leaf>,
     Leaf: Clone + PartialEq + Eq + Display + Hash + Debug,
 {
     fn to_core_rule(
@@ -1105,7 +1167,7 @@ where
         union_to_set_optimization: bool,
     ) -> Result<GenericCoreRule<HeadOrEq<Head>, Head, Leaf>, TypeError>
     where
-        Head: Clone + Display + IsFunc,
+        Head: Clone + Display + IsFunc + CoreTermHead<Leaf>,
         Leaf: Clone + PartialEq + Eq + Display + Hash + Debug,
     {
         let (body, _correspondence) = Facts(self.body.clone()).to_query(typeinfo, fresh_gen);

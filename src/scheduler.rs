@@ -348,7 +348,6 @@ impl SchedulerRuleInfo {
         let mut qrule_builder = BackendRule::new(
             egraph.backend.new_rule(name, true),
             &egraph.functions,
-            &egraph.type_info,
             true, // seminaive rule context
         );
         qrule_builder.query(&rule.body, true);
@@ -368,7 +367,6 @@ impl SchedulerRuleInfo {
         let mut arule_builder = BackendRule::new(
             egraph.backend.new_rule(name, false),
             &egraph.functions,
-            &egraph.type_info,
             false, // seminaive off for scheduler action rule
         );
         let mut entries = free_vars
