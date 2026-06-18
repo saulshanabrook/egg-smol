@@ -3,6 +3,7 @@
 ## [Unreleased] - ReleaseDate
 
 - Add typed `EGraph` extension state that clones with `EGraph` and is restored by `push`/`pop`.
+- Fix custom schedulers so multiple body-only witnesses for the same action key run once, preventing duplicate action attempts and match counts for rules like `(rule ((A x y)) ((Hit x)))`.
 - Report full source file paths in egglog span and error messages.
 - Fix seminaive matching after nested containers rebuild in place by propagating dirty container ids through parent containers.
 - Render nullary AST calls without a trailing space, e.g. (foo) instead of (foo ).

@@ -8,7 +8,13 @@ use egglog_bridge::{
 use egglog_reports::RunReport;
 use numeric_id::define_id;
 
-use crate::{ast::ResolvedVar, core::GenericAtomTerm, core::ResolvedCoreRule, util::IndexMap, *};
+use crate::{
+    ast::ResolvedVar,
+    core::GenericAtomTerm,
+    core::ResolvedCoreRule,
+    util::{IndexMap, IndexSet},
+    *,
+};
 
 /// A scheduler decides which matches to be applied for a rule.
 ///
@@ -102,6 +108,13 @@ impl Matches {
     }
 
     /// Apply the chosen matches and return the residual matches.
+    ///
+    /// The scheduler only sees variables that appear in rule actions. Variables
+    /// that occur only in the body are witnesses for the same scheduler key. For
+    /// example, `(rule ((A x y)) ((Hit x)))` collects only `x`, so `A(1, 10)`
+    /// and `A(1, 20)` are duplicate witnesses for the same `x = 1` action key.
+    /// Chosen and residual rows are deduplicated by that key so a scheduler
+    /// decision fires or carries one witness per action key.
     fn instantiate(
         mut self,
         state: &mut ExecutionState<'_>,
@@ -111,35 +124,45 @@ impl Matches {
         let unit = state.base_values().get(());
 
         if self.all_chosen {
+            let mut inserted_keys = IndexSet::default();
             for row in self.matches.chunks(tuple_len) {
-                table_action.insert(state, row.iter().cloned().chain(std::iter::once(unit)));
+                if inserted_keys.insert(row.to_vec()) {
+                    table_action.insert(state, row.iter().copied().chain(std::iter::once(unit)));
+                }
             }
             vec![]
         } else {
-            for idx in self.chosen.iter() {
-                let row = &self.matches[idx * tuple_len..(idx + 1) * tuple_len];
-                table_action.insert(state, row.iter().cloned().chain(std::iter::once(unit)));
-            }
-
-            // swap remove the chosen matches
             self.chosen.sort_unstable();
             self.chosen.dedup();
-            let mut p = self.match_size();
-            for c in self.chosen.into_iter().rev() {
-                // It's important to decrement `p` first, because otherwise it might underflow when
-                // matches are exhausted.
-                p -= 1;
-                if c != p {
-                    let idx_c = c * tuple_len;
-                    let idx_p = p * tuple_len;
-                    for i in 0..tuple_len {
-                        self.matches.swap(idx_c + i, idx_p + i);
-                    }
+
+            let chosen_keys = self
+                .chosen
+                .iter()
+                .map(|idx| {
+                    let row = &self.matches[idx * tuple_len..(idx + 1) * tuple_len];
+                    row.to_vec()
+                })
+                .collect::<IndexSet<_>>();
+
+            for key in &chosen_keys {
+                table_action.insert(state, key.iter().copied().chain(std::iter::once(unit)));
+            }
+
+            let mut residual = Vec::new();
+            let mut residual_keys = IndexSet::default();
+            for (idx, row) in self.matches.chunks(tuple_len).enumerate() {
+                if self.chosen.binary_search(&idx).is_ok() {
+                    continue;
+                }
+                if chosen_keys.contains(row) {
+                    continue;
+                }
+                if residual_keys.insert(row.to_vec()) {
+                    residual.extend_from_slice(row);
                 }
             }
-            self.matches.truncate(p * tuple_len);
 
-            self.matches
+            residual
         }
     }
 }
@@ -399,6 +422,8 @@ impl SchedulerRuleInfo {
 
 #[cfg(test)]
 mod test {
+    use std::sync::{Arc, Mutex};
+
     use super::*;
 
     #[derive(Clone)]
@@ -416,6 +441,21 @@ mod test {
                 }
             }
             matches.match_size() < self.n * 2
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct ChooseFirstScheduler {
+        match_sizes: Arc<Mutex<Vec<usize>>>,
+    }
+
+    impl Scheduler for ChooseFirstScheduler {
+        fn filter_matches(&mut self, _rule: &str, _ruleset: &str, matches: &mut Matches) -> bool {
+            self.match_sizes.lock().unwrap().push(matches.match_size());
+            if matches.match_size() > 0 {
+                matches.choose(0);
+            }
+            false
         }
     }
 
@@ -476,6 +516,77 @@ mod test {
         }
 
         assert_eq!(iter, 12);
+    }
+
+    /// Multiple body-only witnesses should count as one chosen action key.
+    ///
+    /// The rule body matches both `A(1, 10)` and `A(1, 20)`, but the action only
+    /// mentions `x`. The scheduler therefore receives two witnesses for the
+    /// same `x = 1` key. When all matches are chosen, the action should be
+    /// attempted once for `Hit(1)`, not once per witness value of `y`.
+    #[test]
+    fn test_scheduler_deduplicates_chosen_body_only_witnesses() {
+        let mut egraph = EGraph::default();
+        let scheduler_id = egraph.add_scheduler(Box::new(FirstNScheduler { n: 10 }));
+        let input = r#"
+        (ruleset test)
+        (relation A (i64 i64))
+        (relation Hit (i64))
+        (A 1 10)
+        (A 1 20)
+        (rule ((A x y)) ((Hit x)) :ruleset test :name "hit")
+        "#;
+        egraph.parse_and_run_program(None, input).unwrap();
+
+        let report = egraph
+            .step_rules_with_scheduler(scheduler_id, "test")
+            .unwrap();
+
+        assert_eq!(egraph.get_size("Hit"), 1);
+        assert_eq!(report.num_matches_per_rule["hit"], 1);
+    }
+
+    /// Duplicate body-only witnesses should not stay in the scheduler backlog.
+    ///
+    /// The first scheduler step chooses one witness for `x = 1`. The other
+    /// witness has the same action key and must be discarded from the residual
+    /// matches; otherwise the second step would offer the same key again and
+    /// count another no-op `Hit(1)` action attempt.
+    #[test]
+    fn test_scheduler_deduplicates_residual_body_only_witnesses() {
+        let mut egraph = EGraph::default();
+        let match_sizes = Arc::new(Mutex::new(Vec::new()));
+        let scheduler_id = egraph.add_scheduler(Box::new(ChooseFirstScheduler {
+            match_sizes: match_sizes.clone(),
+        }));
+        let input = r#"
+        (ruleset test)
+        (relation A (i64 i64))
+        (relation Hit (i64))
+        (A 1 10)
+        (A 1 20)
+        (rule ((A x y)) ((Hit x)) :ruleset test :name "hit")
+        "#;
+        egraph.parse_and_run_program(None, input).unwrap();
+
+        let first = egraph
+            .step_rules_with_scheduler(scheduler_id, "test")
+            .unwrap();
+        let second = egraph
+            .step_rules_with_scheduler(scheduler_id, "test")
+            .unwrap();
+
+        assert_eq!(*match_sizes.lock().unwrap(), vec![2, 0]);
+        assert_eq!(egraph.get_size("Hit"), 1);
+        assert_eq!(first.num_matches_per_rule["hit"], 1);
+        assert_eq!(
+            second
+                .num_matches_per_rule
+                .get("hit")
+                .copied()
+                .unwrap_or_default(),
+            0
+        );
     }
 
     #[derive(Clone, Default)]
