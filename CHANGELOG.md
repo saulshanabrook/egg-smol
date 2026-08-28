@@ -2,6 +2,10 @@
 
 ## [Unreleased] - ReleaseDate
 
+### Bug fixes
+
+- Escape quotes and backslashes in printed rule names so the generated syntax round-trips through the parser.
+
 ## [3.0.0] - 2026-08-18
 
 ### Breaking changes
